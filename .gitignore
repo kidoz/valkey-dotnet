@@ -1,0 +1,11 @@
+bin/
+obj/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+.idea/
+BenchmarkDotNet.Artifacts/
+
+# .agents/tools/*.py byproducts; the standards validator rejects these.
+__pycache__/
+*.py[cod]
