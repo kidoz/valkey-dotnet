@@ -30,11 +30,14 @@
                 ReadOnlyMemory<byte> would be misleading.
         CA2000  ConnectAsync transfers ownership of the client to the caller and disposes it on
                 every failure path.
-        CA2213  _commandGate is deliberately not disposed. SemaphoreSlim allocates no unmanaged
-                resource unless AvailableWaitHandle is read, which this type never does, and
-                InvalidateAsync runs inside a try whose finally calls _commandGate.Release() —
-                disposing it there would throw ObjectDisposedException from the finally and mask
-                the original failure.
+        CA2213  The coordination primitives — _writeGate, _pendingCapacity, and _readerShutdown on
+                ValkeyClient, and _clientGate on ValkeyClusterClient — are deliberately not
+                disposed. Invalidation runs while other callers may still be waiting on those
+                gates and while the response loop still observes _readerShutdown.Token; disposing
+                them would throw ObjectDisposedException over the terminal failure each pending
+                caller is meant to observe. Neither type holds an unmanaged resource here:
+                SemaphoreSlim allocates one only if AvailableWaitHandle is read, which these types
+                never do, and _readerShutdown never schedules a cancellation timer.
         CA2225  Named alternates (FromString, FromInt32, ...) would enlarge the public surface;
                 the implicit conversions are the intended ergonomics.
     -->
