@@ -1,5 +1,5 @@
 using System.Text;
-using ValkeyDotNet.Internal;
+using ValkeyDotNet.Protocol;
 
 namespace ValkeyDotNet.Tests;
 

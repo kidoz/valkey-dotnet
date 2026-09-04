@@ -1,7 +1,7 @@
 using System.Buffers.Text;
 using System.Diagnostics;
 
-namespace ValkeyDotNet.Internal;
+namespace ValkeyDotNet.Protocol;
 
 internal static class RespWriter
 {

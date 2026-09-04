@@ -3,7 +3,7 @@ using System.Collections.Frozen;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
-using ValkeyDotNet.Internal;
+using ValkeyDotNet.Protocol;
 
 namespace ValkeyDotNet;
 

@@ -1,6 +1,7 @@
 using System.Globalization;
+using ValkeyDotNet.Tests.TestInfrastructure;
 
-namespace ValkeyDotNet.Tests;
+namespace ValkeyDotNet.Tests.Cluster;
 
 public sealed class ValkeyClusterClientTests
 {

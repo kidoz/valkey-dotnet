@@ -3,7 +3,12 @@ set shell := ["bash", "-uc"]
 solution := "ValkeyDotNet.slnx"
 lib := "src/ValkeyDotNet"
 tests := "tests/ValkeyDotNet.Tests"
+integration_tests := "tests/ValkeyDotNet.IntegrationTests"
 benchmarks := "benchmarks/ValkeyDotNet.Benchmarks"
+
+# Disposable Valkey servers live under dev/.
+compose := "dev/docker-compose.yml"
+cluster_compose := "dev/docker-compose.cluster.yml"
 
 # List available recipes.
 default:
@@ -25,21 +30,21 @@ build:
 build-release:
     dotnet build -c Release {{ solution }}
 
-# Run the unit tests. Live-server tests are skipped.
+# Run the server-free unit tests.
 test:
     dotnet run --project {{ tests }}
 
-# Run the tests including the live round trip against a disposable server.
+# Run the live suite against a disposable server. Skips when no endpoint is set.
 test-live endpoint="127.0.0.1:6379":
-    VALKEYDOTNET_ENDPOINT={{ endpoint }} dotnet run --project {{ tests }}
+    VALKEYDOTNET_ENDPOINT={{ endpoint }} dotnet run --project {{ integration_tests }}
 
 # Start every supported Valkey line and wait until each is healthy.
 valkey-up:
-    docker compose up -d --wait
+    docker compose -f {{ compose }} up -d --wait
 
 # Stop the test servers and drop their volumes.
 valkey-down:
-    docker compose down -v
+    docker compose -f {{ compose }} down -v
 
 # Report the server version behind each test port.
 valkey-versions:
@@ -47,7 +52,7 @@ valkey-versions:
     set -uo pipefail
     for port in 6379 6380 6381; do
         printf 'port %s: ' "$port"
-        docker compose exec -T "valkey-$( [ $port = 6379 ] && echo 9 || { [ $port = 6380 ] && echo 8 || echo 7; } )" \
+        docker compose -f {{ compose }} exec -T "valkey-$( [ $port = 6379 ] && echo 9 || { [ $port = 6380 ] && echo 8 || echo 7; } )" \
             valkey-cli info server 2>/dev/null | tr -d '\r' | grep '^valkey_version' || echo 'unavailable'
     done
 
@@ -58,7 +63,7 @@ test-matrix: valkey-up
     status=0
     for port in 6379 6380 6381; do
         echo "=== Valkey on port $port ==="
-        VALKEYDOTNET_ENDPOINT=127.0.0.1:$port dotnet run --project {{ tests }} || status=1
+        VALKEYDOTNET_ENDPOINT=127.0.0.1:$port dotnet run --project {{ integration_tests }} || status=1
     done
     exit $status
 
@@ -66,7 +71,7 @@ test-matrix: valkey-up
 cluster-up:
     #!/usr/bin/env bash
     set -euo pipefail
-    compose=(docker compose -f docker-compose.cluster.yml)
+    compose=(docker compose -f {{ cluster_compose }})
     "${compose[@]}" up -d --wait valkey-cluster-1 valkey-cluster-2 valkey-cluster-3
     "${compose[@]}" run --rm cluster-init
     services=(valkey-cluster-1 valkey-cluster-2 valkey-cluster-3)
@@ -92,11 +97,11 @@ cluster-up:
 test-cluster: cluster-up
     VALKEYDOTNET_CLUSTER_ENDPOINTS=127.0.0.1:16379,127.0.0.1:16380,127.0.0.1:16381 \
     VALKEYDOTNET_CLUSTER_MAPPED_HOST=127.0.0.1 \
-    dotnet run --project {{ tests }}
+    dotnet run --project {{ integration_tests }}
 
 # Stop the disposable cluster and remove its containers and networks.
 cluster-down:
-    docker compose -f docker-compose.cluster.yml down -v
+    docker compose -f {{ cluster_compose }} down -v
 
 # Run the BenchmarkDotNet suite. Release only; results feed BENCHMARKS.md.
 bench *args:

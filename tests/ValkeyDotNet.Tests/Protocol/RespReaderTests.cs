@@ -1,9 +1,9 @@
 using System.Globalization;
 using System.Text;
 using NSubstitute;
-using ValkeyDotNet.Internal;
+using ValkeyDotNet.Protocol;
 
-namespace ValkeyDotNet.Tests;
+namespace ValkeyDotNet.Tests.Protocol;
 
 public sealed class RespReaderTests
 {

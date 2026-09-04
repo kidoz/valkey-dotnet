@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 
-namespace ValkeyDotNet.Tests;
+namespace ValkeyDotNet.IntegrationTests;
 
 /// <summary>
 /// Live compatibility coverage across maintained Valkey release lines.

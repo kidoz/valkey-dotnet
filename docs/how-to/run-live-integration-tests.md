@@ -9,7 +9,7 @@ runner a disposable Valkey server.
 just valkey-up
 ```
 
-This brings up `docker-compose.yml` and waits until every container is healthy:
+This brings up `dev/docker-compose.yml` and waits until every container is healthy:
 
 | Service | Line | Port |
 |---|---|---|
@@ -34,7 +34,7 @@ just test-live 127.0.0.1:6380       # the 8.x server
 The raw equivalent:
 
 ```bash
-VALKEYDOTNET_ENDPOINT=127.0.0.1:6379 dotnet run --project tests/ValkeyDotNet.Tests
+VALKEYDOTNET_ENDPOINT=127.0.0.1:6379 dotnet run --project tests/ValkeyDotNet.IntegrationTests
 ```
 
 ## Run against every maintained line
@@ -53,7 +53,7 @@ implement skip with a reason rather than failing — on 8.x and 7.x you will see
 just test-cluster
 ```
 
-This uses `docker-compose.cluster.yml` to start and initialize three Valkey 9.1 primaries on ports
+This uses `dev/docker-compose.cluster.yml` to start and initialize three Valkey 9.1 primaries on ports
 16379–16381. The nodes announce their container hostnames for node-to-node communication; the test's
 `EndpointMapper` translates those names to host-published ports. It exercises `CLUSTER SHARDS`,
 topology refresh, three slot ranges, and a pipeline distributed across the primaries.
@@ -70,7 +70,7 @@ to replace every announced hostname:
 ```bash
 VALKEYDOTNET_CLUSTER_ENDPOINTS=127.0.0.1:16379,127.0.0.1:16380 \
 VALKEYDOTNET_CLUSTER_MAPPED_HOST=127.0.0.1 \
-dotnet run --project tests/ValkeyDotNet.Tests
+dotnet run --project tests/ValkeyDotNet.IntegrationTests
 ```
 
 ## Tear down

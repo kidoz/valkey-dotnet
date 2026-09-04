@@ -1,5 +1,12 @@
 <Solution>
-    <Project Path="src/ValkeyDotNet/ValkeyDotNet.csproj" />
-    <Project Path="tests/ValkeyDotNet.Tests/ValkeyDotNet.Tests.csproj" />
-    <Project Path="benchmarks/ValkeyDotNet.Benchmarks/ValkeyDotNet.Benchmarks.csproj" />
+    <Folder Name="/src/">
+        <Project Path="src/ValkeyDotNet/ValkeyDotNet.csproj" />
+    </Folder>
+    <Folder Name="/tests/">
+        <Project Path="tests/ValkeyDotNet.Tests/ValkeyDotNet.Tests.csproj" />
+        <Project Path="tests/ValkeyDotNet.IntegrationTests/ValkeyDotNet.IntegrationTests.csproj" />
+    </Folder>
+    <Folder Name="/benchmarks/">
+        <Project Path="benchmarks/ValkeyDotNet.Benchmarks/ValkeyDotNet.Benchmarks.csproj" />
+    </Folder>
 </Solution>

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Authentication;
 using System.Security.Cryptography;
+using ValkeyDotNet.Tests.TestInfrastructure;
 
 namespace ValkeyDotNet.Tests;
 

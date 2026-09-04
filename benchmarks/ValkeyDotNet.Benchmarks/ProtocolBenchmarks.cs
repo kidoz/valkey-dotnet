@@ -1,6 +1,6 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
-using ValkeyDotNet.Internal;
+using ValkeyDotNet.Protocol;
 
 namespace ValkeyDotNet.Benchmarks;
 

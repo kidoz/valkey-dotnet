@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Text;
-using ValkeyDotNet.Internal;
+using ValkeyDotNet.Cluster;
 
 namespace ValkeyDotNet;
 

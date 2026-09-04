@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Numerics;
 using System.Text;
 
-namespace ValkeyDotNet.Internal;
+namespace ValkeyDotNet.Protocol;
 
 internal sealed class RespReader
 {

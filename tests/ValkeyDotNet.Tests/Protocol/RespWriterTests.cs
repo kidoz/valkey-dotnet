@@ -1,7 +1,7 @@
 using System.Text;
-using ValkeyDotNet.Internal;
+using ValkeyDotNet.Protocol;
 
-namespace ValkeyDotNet.Tests;
+namespace ValkeyDotNet.Tests.Protocol;
 
 public sealed class RespWriterTests
 {

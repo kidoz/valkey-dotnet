@@ -1,25 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <OutputType>Exe</OutputType>
-        <IsTestProject>true</IsTestProject>
-        <IsPackable>false</IsPackable>
         <AssemblyName>ValkeyDotNet.Tests</AssemblyName>
-        <!--
-      CA2007  ConfigureAwait is a library concern. The xUnit runner has no synchronization context
-              to deadlock against, so requiring it here would only add noise. The rule stays on for
-              src/ValkeyDotNet, which is what matters.
-    -->
-        <NoWarn>$(NoWarn);CA2007</NoWarn>
     </PropertyGroup>
-    <ItemGroup>
-        <ProjectReference Include="../../src/ValkeyDotNet/ValkeyDotNet.csproj" />
-    </ItemGroup>
     <ItemGroup>
         <PackageReference Include="NSubstitute" />
         <PackageReference Include="NSubstitute.Analyzers.CSharp" PrivateAssets="all" />
-        <PackageReference Include="xunit.v3" />
-    </ItemGroup>
-    <ItemGroup>
-        <Using Include="Xunit" />
     </ItemGroup>
 </Project>

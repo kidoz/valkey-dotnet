@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace ValkeyDotNet.Tests;
+namespace ValkeyDotNet.IntegrationTests;
 
 public sealed class ValkeyClusterIntegrationTests
 {

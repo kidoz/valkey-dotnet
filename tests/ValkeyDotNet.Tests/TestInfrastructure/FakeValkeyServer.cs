@@ -6,7 +6,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
-namespace ValkeyDotNet.Tests;
+namespace ValkeyDotNet.Tests.TestInfrastructure;
 
 /// <summary>
 /// A scripted single-session Valkey server on loopback. It lets a test drive the exact byte sequence

@@ -1,4 +1,4 @@
-namespace ValkeyDotNet.Internal;
+namespace ValkeyDotNet.Cluster;
 
 internal static class ClusterHashSlot
 {

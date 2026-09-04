@@ -192,7 +192,7 @@ The solution targets .NET 10 with `TreatWarningsAsErrors` and `AnalysisLevel=lat
 suppressed analyzer rule carries a written justification in the owning `.csproj`. CSharpier owns all
 formatting, including project files.
 
-Live integration tests need a disposable server and are skipped otherwise. `docker-compose.yml`
+Live integration tests need a disposable server and are skipped otherwise. `dev/docker-compose.yml`
 provides one container per maintained Valkey line:
 
 ```bash

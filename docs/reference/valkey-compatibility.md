@@ -3,7 +3,7 @@
 ## Verified server versions
 
 Every maintained Valkey release line is exercised by the live compatibility suite
-(`tests/ValkeyDotNet.Tests/ValkeyCompatibilityTests.cs`).
+(`tests/ValkeyDotNet.IntegrationTests/ValkeyCompatibilityTests.cs`).
 
 | Line | Version verified | Test port | Result |
 |---|---|---|---|
@@ -107,5 +107,5 @@ just test-cluster     # initialize and test a disposable three-primary 9.x clust
 just cluster-down     # tear down the cluster
 ```
 
-Servers are defined in `docker-compose.yml` with in-memory persistence disabled. They are disposable
+Servers are defined in `dev/docker-compose.yml` with in-memory persistence disabled. They are disposable
 test targets; never point the suite at a server holding data you care about.
