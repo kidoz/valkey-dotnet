@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <IsPackable>false</IsPackable>
+        <AssemblyName>ValkeyDotNet.Benchmarks</AssemblyName>
+        <!--
+      CA1822  BenchmarkDotNet discovers and invokes instance benchmark methods.
+      CA1515  BenchmarkDotNet requires public benchmark types to discover them.
+      CA2007  ConfigureAwait is a library concern; benchmark harness code does not need it.
+    -->
+        <NoWarn>$(NoWarn);CA1822;CA1515;CA2007</NoWarn>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="../../src/ValkeyDotNet/ValkeyDotNet.csproj" />
+    </ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="BenchmarkDotNet" />
+    </ItemGroup>
+</Project>
