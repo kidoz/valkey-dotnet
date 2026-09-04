@@ -1,7 +1,7 @@
 # `ValkeyClient`
 
 An asynchronous client for a single Valkey node. Implements `IAsyncDisposable`. Safe for concurrent
-callers: commands are serialized and replies are returned in wire order.
+callers: writes are serialized, commands overlap, and one reader returns replies in wire order.
 
 Namespace: `ValkeyDotNet`.
 
@@ -33,9 +33,9 @@ Idempotent. Closes the stream and the socket.
 | `NegotiatedProtocol` | `ValkeyProtocol` | The protocol the server reported in its `HELLO` reply, which may be lower than `Protocol` requested. A reply that reports no supported version fails the connect with `ValkeyProtocolException`. |
 | `PushReceived` | `event Action<RespValue>?` | Raised when a RESP3 push frame is read while awaiting a command reply. |
 
-`PushReceived` fires on the thread draining the reply. There is no idle background reader, so pushes
-surface only while a command is in flight. Exceptions thrown by a handler are swallowed so a caller
-bug cannot desynchronize the wire.
+`PushReceived` fires on the client's response-reader continuation. That reader runs continuously after
+the handshake, so RESP3 pushes can surface while no command is in flight. Exceptions thrown by a
+handler are swallowed so a caller bug cannot desynchronize the wire.
 
 ## Generic commands
 
@@ -56,8 +56,9 @@ public Task<IReadOnlyList<RespValue>> ExecutePipelineAsync(
     CancellationToken cancellationToken = default)
 ```
 
-Writes every command, flushes once, then reads one reply per command. Returns replies in request
-order. **Error replies are returned in place rather than thrown** — call `ThrowIfError()` on each.
+Writes every command contiguously, flushes once, then awaits one FIFO reply per command. Returns
+replies in request order. **Error replies are returned in place rather than thrown** — call
+`ThrowIfError()` on each.
 Returns an empty list for an empty sequence. Throws `ArgumentNullException` for a null sequence and
 `ArgumentException` when any element is null. Every command is checked against the unsupported list
 before the batch is written, so one `ValkeyUnsupportedCommandException` rejects the batch whole
@@ -97,8 +98,16 @@ Anything not listed goes through `ExecuteAsync`; see
 
 ## Concurrency and failure
 
-One `SemaphoreSlim` gate serializes command execution, so concurrent callers queue rather than
-interleave on the wire. On `OperationCanceledException`, `IOException`, `SocketException`, or
-`ValkeyProtocolException` the client invalidates the connection before propagating — the stream may
-sit between frames, so it cannot safely be reused. `IOException` and `SocketException` are wrapped in
-`ValkeyConnectionException`. Calling any method after invalidation throws `ObjectDisposedException`.
+One `SemaphoreSlim` serializes writes only. Each written command enters a FIFO pending-response queue,
+and one background reader assigns the next non-push frame to the next pending command. Concurrent
+callers therefore share one socket without interleaving command bytes or running multiple readers.
+A pipeline holds the write gate for its whole batch, so its commands remain contiguous.
+`MaxPendingRequests` bounds the queue; excess ordinary callers wait asynchronously, and a larger
+pipeline is rejected before writing.
+
+Cancellation before a caller enters the pending queue leaves the connection untouched. Cancellation
+after enqueue invalidates the connection: a write may be partial and abandoning a positional reply
+could assign it to another caller. Every other pending caller is faulted with
+`ValkeyConnectionException`; the canceled caller observes `OperationCanceledException`. An I/O or
+protocol failure likewise invalidates the connection and faults all pending work. Calling any method
+after invalidation throws `ObjectDisposedException`.

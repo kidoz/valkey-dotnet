@@ -244,6 +244,37 @@ public sealed class ValkeyClientTests
         Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task PushFramesAreDeliveredWhileTheConnectionIsIdle()
+    {
+        var sendPush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseServer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await sendPush.Task;
+            await session.SendAsync(">1\r\n+idle-push\r\n");
+            await releaseServer.Task;
+        });
+        await using var client = await ValkeyClient.ConnectAsync(
+            server.ClientOptions(),
+            TestContext.Current.CancellationToken
+        );
+        var received = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.PushReceived += received.SetResult;
+
+        sendPush.SetResult();
+        try
+        {
+            var push = await received.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            Assert.Equal("idle-push", push.AsArray()[0].AsString());
+        }
+        finally
+        {
+            releaseServer.TrySetResult();
+        }
+    }
+
     [Theory]
     [InlineData("SUBSCRIBE")]
     [InlineData("UNSUBSCRIBE")]
@@ -353,6 +384,38 @@ public sealed class ValkeyClientTests
         Assert.Equal("OK", replies[0].AsString());
         Assert.Equal(RespType.SimpleError, replies[1].Type);
         Assert.Throws<ValkeyServerException>(replies[1].ThrowIfError);
+    }
+
+    [Fact]
+    public async Task ExecutePipelineAsyncRejectsABatchAboveThePendingRequestLimitBeforeWriting()
+    {
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+        });
+        var options = server.ClientOptions();
+        await using var client = await ValkeyClient.ConnectAsync(
+            new ValkeyClientOptions
+            {
+                Host = options.Host,
+                Port = options.Port,
+                ConnectTimeout = options.ConnectTimeout,
+                MaxPendingRequests = 1,
+            },
+            TestContext.Current.CancellationToken
+        );
+
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await client.ExecutePipelineAsync(
+                [new ValkeyCommand("PING"), new ValkeyCommand("PING")],
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        await client.DisposeAsync();
+        await server.Session;
+        Assert.Single(server.ReceivedCommands);
     }
 
     [Fact]
@@ -468,11 +531,14 @@ public sealed class ValkeyClientTests
         await using var server = FakeValkeyServer.Start(async session =>
         {
             await session.ExpectHandshakeAsync();
+            var commands = new string[callers][];
             for (var i = 0; i < callers; i++)
-            {
-                var command = await session.ReadCommandAsync();
-                await session.SendAsync($"+{command[1]}\r\n");
-            }
+                commands[i] = await session.ReadCommandAsync();
+
+            // Holding every reply until every command arrives proves callers share one multiplexed
+            // socket. A client that holds its write lock while awaiting a reply deadlocks here.
+            for (var i = 0; i < callers; i++)
+                await session.SendAsync($"+{commands[i][1]}\r\n");
         });
         await using var client = await ValkeyClient.ConnectAsync(
             server.ClientOptions(),
@@ -492,6 +558,89 @@ public sealed class ValkeyClientTests
 
         for (var index = 0; index < callers; index++)
             Assert.Equal(index.ToString(CultureInfo.InvariantCulture), replies[index].AsString());
+    }
+
+    [Fact]
+    public async Task CancellingAnEnqueuedCommandFailsEveryPendingCaller()
+    {
+        var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseServer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.ReadCommandAsync();
+            written.SetResult();
+            await releaseServer.Task;
+        });
+        await using var client = await ValkeyClient.ConnectAsync(
+            server.ClientOptions(),
+            TestContext.Current.CancellationToken
+        );
+        using var cancellation = new CancellationTokenSource();
+
+        var cancelled = client.GetStringAsync("cancelled", cancellation.Token);
+        var collateral = client.GetStringAsync("collateral", TestContext.Current.CancellationToken);
+        await written.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        await cancellation.CancelAsync();
+
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await cancelled);
+            await Assert.ThrowsAsync<ValkeyConnectionException>(async () => await collateral);
+            await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+                await client.PingAsync(TestContext.Current.CancellationToken)
+            );
+        }
+        finally
+        {
+            releaseServer.TrySetResult();
+        }
+    }
+
+    [Fact]
+    public async Task CancellingWhilePendingCapacityIsFullLeavesTheConnectionUsable()
+    {
+        var firstWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replyToFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            firstWritten.SetResult();
+            await replyToFirst.Task;
+            await session.SendAsync("+first\r\n");
+            await session.ReadCommandAsync();
+            await session.SendAsync("+PONG\r\n");
+        });
+        var options = server.ClientOptions();
+        await using var client = await ValkeyClient.ConnectAsync(
+            new ValkeyClientOptions
+            {
+                Host = options.Host,
+                Port = options.Port,
+                ConnectTimeout = options.ConnectTimeout,
+                MaxPendingRequests = 1,
+            },
+            TestContext.Current.CancellationToken
+        );
+
+        var first = client.ExecuteAsync(new ValkeyCommand("ECHO", "first"), TestContext.Current.CancellationToken);
+        await firstWritten.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        using var cancellation = new CancellationTokenSource();
+        var waiting = client.PingAsync(cancellation.Token);
+        await cancellation.CancelAsync();
+
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await waiting);
+        }
+        finally
+        {
+            replyToFirst.TrySetResult();
+        }
+        Assert.Equal("first", (await first).AsString());
+        Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]

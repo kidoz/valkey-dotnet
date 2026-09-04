@@ -30,9 +30,10 @@ Implemented:
 - RESP2 and RESP3, including maps, sets, attributes, push frames, verbatim strings, big numbers, and
   streamed values
 - TCP and TLS, ACL authentication, client naming, and logical database selection
-- Binary-safe generic commands, async cancellation, bounded response parsing, and command pipelining
+- Binary-safe generic commands, async cancellation, bounded pending work and response parsing, and
+  command pipelining
 - Convenience methods for common string, counter, and hash operations
-- Concurrent callers on one connection, serialized safely in wire order
+- Concurrent callers multiplexed on one connection with FIFO reply matching
 
 Deliberately not implemented: cluster routing, Sentinel discovery, connection pooling, automatic
 reconnect/retry, and subscription-mode Pub/Sub — the commands that would need them are rejected with
@@ -106,7 +107,7 @@ grow without changing the transport or parser.
 
 ### Pipelining
 
-Pipelining sends every command before reading any reply:
+Pipelining sends a contiguous batch without waiting for individual replies:
 
 ```csharp
 var replies = await valkey.ExecutePipelineAsync(

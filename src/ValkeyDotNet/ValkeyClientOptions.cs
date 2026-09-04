@@ -21,6 +21,13 @@ public sealed class ValkeyClientOptions
     public bool UseTls { get; init; }
     public RemoteCertificateValidationCallback? CertificateValidationCallback { get; init; }
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Maximum number of commands written to this connection whose replies have not yet been read.
+    /// This bounds multiplexer bookkeeping and applies to ordinary calls and pipeline entries.
+    /// </summary>
+    public int MaxPendingRequests { get; init; } = 1024;
+
     public int MaxResponseBytes { get; init; } = 64 * 1024 * 1024;
 
     /// <summary>
@@ -43,6 +50,8 @@ public sealed class ValkeyClientOptions
             throw new ArgumentOutOfRangeException(nameof(Protocol));
         if (ConnectTimeout <= TimeSpan.Zero || ConnectTimeout.TotalMilliseconds > MaxConnectTimeoutMilliseconds)
             throw new ArgumentOutOfRangeException(nameof(ConnectTimeout));
+        if (MaxPendingRequests is < 1 or > 1024 * 1024)
+            throw new ArgumentOutOfRangeException(nameof(MaxPendingRequests));
         if (MaxResponseBytes < 1024)
             throw new ArgumentOutOfRangeException(nameof(MaxResponseBytes));
         if (MaxResponseElements < 16)

@@ -1,7 +1,7 @@
 # Pipeline commands
 
-Pipelining writes every command before reading any reply, collapsing *n* round trips into one. Use it
-when you have several independent commands and the round-trip latency dominates.
+Pipelining writes one contiguous batch without waiting for individual replies, collapsing *n* round
+trips into one. Use it when you have several independent commands and round-trip latency dominates.
 
 ## Send a batch
 
@@ -68,8 +68,8 @@ An empty sequence returns an empty list without touching the socket. A `null` el
 ## Size the batch
 
 Every reply in a batch is materialized before the call returns, so a batch of *n* commands holds *n*
-replies in memory at once. Each individual reply is still bounded by `MaxResponseBytes`, but the
-batch as a whole is not. Chunk large workloads:
+replies in memory at once. Each individual reply is bounded by `MaxResponseBytes`, and the command
+count is bounded by `MaxPendingRequests`. Chunk large workloads below both limits:
 
 ```csharp
 foreach (var chunk in keys.Chunk(1_000))
@@ -85,10 +85,11 @@ foreach (var chunk in keys.Chunk(1_000))
 
 - **Not a transaction.** Commands are not atomic and other clients interleave. For atomicity use
   `MULTI`/`EXEC` through [`ExecuteAsync`](send-any-command.md), or a Lua script.
-- **Not for dependent commands.** Everything is written before anything is read, so a command cannot
-  use an earlier reply. Await them separately, or move the logic server-side into a script.
-- **Not concurrency.** A single client serializes commands anyway; pipelining reduces round trips, it
-  does not parallelize.
+- **Not for dependent commands.** The whole batch is submitted before any reply is returned to the
+  caller, so a command cannot use an earlier result. Await them separately, or move the logic
+  server-side into a script.
+- **Not required for concurrency.** Ordinary calls are already multiplexed. Pipelining keeps a batch
+  contiguous and reduces writes and flushes; it does not make the commands atomic.
 
 ## Failure behaviour
 

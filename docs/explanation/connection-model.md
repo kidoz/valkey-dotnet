@@ -6,10 +6,11 @@ failure, and what that rules out. It is background, not instruction — for the 
 
 ## One client is one socket
 
-A `ValkeyClient` owns exactly one TCP (or TLS) connection to one node. There is no pool, no
-multiplexer, and no discovery. That is a deliberate floor, not an oversight: pooling, cluster
-routing, and reconnect are each substantial subsystems with their own failure modes, and building
-them on an unproven transport produces bugs that are very hard to attribute.
+A `ValkeyClient` owns exactly one TCP (or TLS) connection to one node and multiplexes ordinary
+commands on that stream. Every connection has exactly one response reader. There is no pool and no
+discovery: pooling, cluster routing, and reconnect are each substantial subsystems with their own
+failure modes, and building them on an unproven transport produces bugs that are very hard to
+attribute.
 
 ## Why replies must stay in order
 
@@ -24,9 +25,14 @@ would see a corrupt command. If a reader abandoned a reply halfway, the next rea
 mid-frame and every subsequent reply would be attributed to the wrong caller — the failure mode is
 not an exception, it is one caller silently receiving another caller's data.
 
-So the client serializes commands through a single gate. Concurrent callers are safe, but they queue;
-they do not overlap on the wire. A slow command delays everyone behind it, which is why blocking
-commands need their own client instance.
+So the client serializes only writes through a single gate, then records each expected response in a
+FIFO queue. One background reader drains replies and completes those pending callers in position.
+Commands can all be in flight on one socket, but neither their bytes nor their replies can be
+reordered.
+
+RESP ordering still creates head-of-line blocking: a slow command delays delivery of every reply
+behind it, even when the server has finished later work. Blocking commands therefore need their own
+client instance.
 
 ## Why cancellation destroys the connection
 
@@ -34,12 +40,11 @@ Cancelling a command that has already written bytes leaves the connection in an 
 server will still execute the command and still send a reply. If the client kept the connection, that
 orphaned reply would be read as the answer to whatever command came next.
 
-The client cannot avoid this by "draining" the pending reply, because it does not always know how
-many replies are outstanding or how large they are — that is exactly what it was cancelled out of
-determining.
-
-So cancellation during I/O invalidates the connection. This is expensive and it is the right trade:
-the alternative is a data-correctness bug that surfaces as one user seeing another user's value.
+The multiplexer uses enqueue as the safety boundary. Cancellation before enqueue is just a canceled
+wait. After enqueue, the write may be partial or its positional reply may already be arriving, so the
+client invalidates the whole connection and faults the other pending callers. This is expensive and
+deliberately conservative: the alternative is a data-correctness bug that surfaces as one user
+seeing another caller's value.
 
 The same reasoning applies to `ValkeyProtocolException` and `ValkeyConnectionException`. Once the
 stream position is untrustworthy, the only safe move is to stop using it.
@@ -70,9 +75,9 @@ hoping would not be.
 
 ## Why pipeline errors are returned, not thrown
 
-`ExecutePipelineAsync` writes *n* commands and must then read *n* replies. Throwing on the first
-error reply would abandon the remaining ones, leaving them buffered in the socket — the same
-desynchronization as an abandoned read.
+`ExecutePipelineAsync` writes *n* contiguous commands and queues *n* reply slots. Throwing on the
+first error reply would prevent the caller from observing the remaining results, even though the
+shared response reader must continue draining them.
 
 Returning errors in place is what lets the client finish draining. The cost is that the caller must
 check each reply; the benefit is that a failed command in a batch does not cost you the connection.
@@ -88,6 +93,9 @@ command, including ones released after this library, works immediately through `
 typed convenience methods are a thin layer of ergonomics on top, not the supported surface.
 
 ## Bounds as a security property
+
+`MaxPendingRequests` bounds the number of FIFO reply slots on each connection. Without it, callers
+could enqueue work faster than a slow server answers and grow multiplexer state without limit.
 
 `MaxResponseBytes`, `MaxResponseElements`, and `MaxNestingDepth` exist because the reader parses
 whatever arrives. A compromised or malfunctioning server can claim a 40 GiB bulk string or nest

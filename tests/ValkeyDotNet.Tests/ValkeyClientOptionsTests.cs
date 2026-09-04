@@ -54,6 +54,10 @@ public sealed class ValkeyClientOptionsTests
     public void RejectsBoundsBelowTheirFloor()
     {
         Assert.Throws<ArgumentOutOfRangeException>(new ValkeyClientOptions { MaxResponseBytes = 1023 }.Validate);
+        Assert.Throws<ArgumentOutOfRangeException>(new ValkeyClientOptions { MaxPendingRequests = 0 }.Validate);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            new ValkeyClientOptions { MaxPendingRequests = 1024 * 1024 + 1 }.Validate
+        );
         Assert.Throws<ArgumentOutOfRangeException>(new ValkeyClientOptions { MaxResponseElements = 15 }.Validate);
         Assert.Throws<ArgumentOutOfRangeException>(new ValkeyClientOptions { MaxNestingDepth = 0 }.Validate);
         Assert.Throws<ArgumentOutOfRangeException>(new ValkeyClientOptions { MaxNestingDepth = 1025 }.Validate);

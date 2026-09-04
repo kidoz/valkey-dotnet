@@ -87,8 +87,8 @@ var released = await valkey.ExecuteAsync(
 );
 ```
 
-Scripting is the way to make several operations atomic without holding a connection across round
-trips — useful because this client has no multiplexing yet.
+Scripting is the way to make several operations atomic without relying on exclusive access to a
+multiplexed connection.
 
 ## Commands the client refuses
 
@@ -115,8 +115,9 @@ underlying reason.
 
 ## Commands that work but cost you
 
-Blocking commands (`BLPOP`, `BRPOP`, `XREAD BLOCK`) hold the single command gate for their whole
-timeout, stalling every other caller on the client. Use a dedicated client instance if you need them.
+Blocking commands (`BLPOP`, `BRPOP`, `XREAD BLOCK`) create response head-of-line blocking: later
+commands can be written, but their replies cannot be delivered first. Use a dedicated client instance
+if you need them.
 
 ## Related
 
