@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <PackageId>ValkeyDotNet</PackageId>
+        <Version>0.1.0</Version>
+        <Description>A .NET client library for Valkey</Description>
+        <Authors>Aleksandr Pavlov</Authors>
+        <Copyright>Copyright (c) 2026 Aleksandr Pavlov</Copyright>
+        <PackageProjectUrl>https://github.com/kidoz/valkey-dotnet</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/kidoz/valkey-dotnet</RepositoryUrl>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageTags>valkey;redis;resp;cache;database</PackageTags>
+        <!--
+      Suppressions for AnalysisLevel=latest-all. Each is a deliberate design decision;
+      do not extend this list without recording the reason here.
+        1591    Undocumented public members are allowed; behaviour-bearing ones are documented.
+        CA1720  RESP uses Integer and Double as canonical wire-type names.
+        CA1003  PushReceived is Action<RespValue>, not EventHandler<T>: a push frame is a
+                lightweight callback and an EventArgs wrapper would add a public type for no gain.
+        CA1008  ValkeyProtocol values mirror the wire numbers (Resp2 = 2, Resp3 = 3). A zero
+                'None' member would be meaningless and would break that mapping.
+        CA1031  ReadNonPushAsync deliberately swallows user push-callback exceptions so a caller
+                bug cannot desynchronize the wire.
+        CA1032  Exception constructors are intentionally constrained: ValkeyServerException derives
+                ErrorCode from the message, and ValkeyConnectionException always wraps an inner cause.
+        CA1065  ValkeyArgument implicit conversions throw on null instead of silently encoding an
+                empty argument, which would send a different command than the caller wrote.
+        CA1815  ValkeyArgument is a transient write-only argument wrapper; value equality over
+                ReadOnlyMemory<byte> would be misleading.
+        CA2000  ConnectAsync transfers ownership of the client to the caller and disposes it on
+                every failure path.
+        CA2213  _commandGate is deliberately not disposed. SemaphoreSlim allocates no unmanaged
+                resource unless AvailableWaitHandle is read, which this type never does, and
+                InvalidateAsync runs inside a try whose finally calls _commandGate.Release() —
+                disposing it there would throw ObjectDisposedException from the finally and mask
+                the original failure.
+        CA2225  Named alternates (FromString, FromInt32, ...) would enlarge the public surface;
+                the implicit conversions are the intended ergonomics.
+    -->
+        <NoWarn>$(NoWarn);1591;CA1720;CA1003;CA1008;CA1031;CA1032;CA1065;CA1815;CA2000;CA2213;CA2225</NoWarn>
+    </PropertyGroup>
+    <ItemGroup>
+        <None Include="../../README.md" Pack="true" PackagePath="/" />
+    </ItemGroup>
+</Project>
