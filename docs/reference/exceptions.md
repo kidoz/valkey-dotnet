@@ -84,8 +84,8 @@ The affected physical connection is terminal. Command-path instances conservativ
 
 ## `ValkeyCapacityException`
 
-The standalone owner's `MaxConcurrentOperations` bound is full. The operation is rejected
-immediately with `NotSent`; existing operations and the physical connection are untouched.
+The standalone owner's `MaxConcurrentOperations`, or the subscriber's operation/subscription bound,
+is full. The operation is rejected with `NotSent`; existing operations and connections are untouched.
 
 ## `ValkeyCommandCanceledException`
 

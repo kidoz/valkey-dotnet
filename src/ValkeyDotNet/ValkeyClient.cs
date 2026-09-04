@@ -351,7 +351,7 @@ public sealed partial class ValkeyClient : IAsyncDisposable
     /// Reads the protocol the server actually selected. HELLO reports it as a map entry on RESP3 and
     /// as a flat key/value array on RESP2, and a server may answer with a lower version than asked.
     /// </summary>
-    private static ValkeyProtocol ReadNegotiatedProtocol(RespValue serverInfo)
+    internal static ValkeyProtocol ReadNegotiatedProtocol(RespValue serverInfo)
     {
         var reported = serverInfo.Type == RespType.Map ? FindProtocol(serverInfo.AsMap()) : FindProtocol(serverInfo);
         return reported switch

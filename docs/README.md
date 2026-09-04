@@ -22,6 +22,9 @@ Observability: [Collect owner telemetry](how-to/collect-telemetry.md) and
 Resilience: [Run isolated restart tests](how-to/run-resilience-tests.md) and
 [executed versus pending evidence](reference/resilience-evidence.md).
 
+Pub/Sub: [Subscribe to messages](how-to/subscribe-to-messages.md) and
+[dedicated subscriber reference](reference/subscriber.md).
+
 ## Writing docs here
 
 Pick the quadrant before you write, and keep the page inside it:

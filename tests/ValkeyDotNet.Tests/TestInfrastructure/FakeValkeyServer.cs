@@ -176,7 +176,10 @@ internal sealed class FakeValkeyServer : IAsyncDisposable
         finally
         {
             if (tls is not null)
+            {
                 await tls.DisposeAsync();
+            }
+
             connection.Dispose();
         }
     }
@@ -204,26 +207,39 @@ internal sealed class FakeValkeySession
 
     public async Task<string[]> ReadCommandAsync()
     {
+        var parts = await ReadBinaryCommandAsync();
+        return parts.Select(Encoding.UTF8.GetString).ToArray();
+    }
+
+    public async Task<byte[][]> ReadBinaryCommandAsync()
+    {
         var header = await ReadLineAsync();
         if (header.Length < 2 || header[0] != '*')
+        {
             throw new InvalidOperationException($"Expected a RESP array header, read '{header}'.");
+        }
 
         var count = int.Parse(header[1..], CultureInfo.InvariantCulture);
-        var parts = new string[count];
+        var parts = new byte[count][];
         for (var i = 0; i < count; i++)
         {
             var lengthLine = await ReadLineAsync();
             if (lengthLine.Length < 2 || lengthLine[0] != '$')
+            {
                 throw new InvalidOperationException($"Expected a bulk string header, read '{lengthLine}'.");
+            }
 
             var payload = new byte[int.Parse(lengthLine[1..], CultureInfo.InvariantCulture)];
             await _stream.ReadExactlyAsync(payload);
             await ReadLineAsync();
-            parts[i] = Encoding.UTF8.GetString(payload);
+            parts[i] = payload;
         }
 
         lock (_received)
-            _received.Add(parts);
+        {
+            _received.Add(parts.Select(Encoding.UTF8.GetString).ToArray());
+        }
+
         return parts;
     }
 

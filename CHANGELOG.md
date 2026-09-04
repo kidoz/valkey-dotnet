@@ -4,6 +4,9 @@
 
 ### Added
 
+- Dedicated RESP2/RESP3 subscriber with binary channel/pattern streams, independent local handles,
+  bounded drop-incoming queues and drop counters, bounded acknowledgement lifecycle, and terminal
+  cancellation/disposal semantics. Reconnect, tracking, and sharded subscriptions remain unsupported.
 - Bounded RESP2/RESP3 concurrent connection-loss regressions and recovery from a non-listening
   loopback endpoint without replaying an unsent write.
 - Opt-in, ownership-validated Docker stop/start runner with configurable cycles, resource samples,

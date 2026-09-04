@@ -88,9 +88,10 @@ instead, before writing a byte, so the failure is immediate, named, and costs no
 connection is untouched and still works. That is what "unsupported behavior fails explicitly" means
 here: not a comment in the docs, a rejection at the call site.
 
-The alternative — a real subscriber mode with a background reader and a connection state machine — is
-a feature this library has deliberately not built yet. Refusing is honest about that; sending and
-hoping would not be.
+The unreleased `ValkeySubscriber` supplies a separate background reader and acknowledgement state
+machine for Pub/Sub. It never changes an ordinary command connection into a subscriber. Its bounded
+async streams keep application handlers off the socket reader; see the
+[subscriber reference](../reference/subscriber.md).
 
 ## Why pipeline errors are returned, not thrown
 
@@ -132,11 +133,10 @@ knobs; raising them by default weakens the process against a hostile peer.
 
 ## What this design defers
 
-Replica reads, cluster-wide scans, Sentinel discovery, general-purpose pooling,
-and subscription-mode Pub/Sub are absent. Each needs a decision this library has not yet
-made — how connections are allocated to workloads, how subscription state is restored
-across a reconnect, how backpressure is signalled.
-Guessing at those would bake wrong answers into the transport.
+Replica reads, cluster-wide scans, Sentinel discovery, and general-purpose pooling remain absent.
+The dedicated subscriber currently treats disconnect as terminal. Automatic subscription restoration,
+tracking invalidations, and topology-aware sharded Pub/Sub need additional state machines and recovery
+evidence before they become part of that API.
 
 The generic command API means none of that blocks day-to-day use. Scripting via `EVAL` covers the
 atomicity cases that would otherwise need a held connection.
