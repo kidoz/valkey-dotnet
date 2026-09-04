@@ -44,6 +44,12 @@ public Task<RespValue> ExecuteAsync(
     ValkeyArgument routingKey,
     ValkeyCommand command,
     CancellationToken cancellationToken = default)
+
+public Task<RespValue> ExecuteWithDeadlineAsync(
+    ValkeyArgument routingKey,
+    ValkeyCommand command,
+    TimeSpan timeout,
+    CancellationToken cancellationToken = default)
 ```
 
 The routing key is hashed with CRC16/XMODEM and reduced to one of 16,384 slots. A non-empty substring
@@ -57,6 +63,10 @@ Redirect endpoints with an empty host reuse the current host, and IPv6 endpoints
 last colon. A redirect reporting a slot different from the routing key is rejected. Malformed
 redirects throw `ValkeyClusterException`.
 
+`ExecuteWithDeadlineAsync` applies one deadline across lazy node connection, the initial command,
+and all bounded redirects. A timeout after any command attempt reports `MayHaveBeenSent`; the
+affected node connection stays usable and drains a late reply.
+
 ```csharp
 public Task RefreshTopologyAsync(CancellationToken cancellationToken = default)
 ```
@@ -69,12 +79,18 @@ Reloads and atomically replaces the complete slot map from the original seed end
 public Task<IReadOnlyList<RespValue>> ExecutePipelineAsync(
     IEnumerable<ValkeyClusterCommand> commands,
     CancellationToken cancellationToken = default)
+
+public Task<IReadOnlyList<RespValue>> ExecutePipelineWithDeadlineAsync(
+    IEnumerable<ValkeyClusterCommand> commands,
+    TimeSpan timeout,
+    CancellationToken cancellationToken = default)
 ```
 
 Each `ValkeyClusterCommand` pairs a command with its routing key. The client groups commands by the
 current primary, pipelines each node group, and executes independent groups concurrently. Replies
 retain the caller's input order. Ordinary server errors remain in place; `MOVED` and `ASK` replies
 are followed individually only after their initial node pipeline has been drained.
+The deadline method shares one deadline across all node groups and redirect work.
 
 ## Convenience methods
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Explicit command delivery status for server, protocol, transport, cancellation, and operation-timeout
+  failures.
+- Isolated per-operation deadline methods for standalone and cluster generic commands and pipelines;
+  late replies remain in the bounded FIFO and are drained without invalidating healthy connections.
+
 ## [1.0.0] - 2026-09-04
 
 First stable release of ValkeyDotNet.

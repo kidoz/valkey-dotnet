@@ -92,7 +92,10 @@ public sealed class RespValueTests
     {
         RespValue.Bytes(RespType.SimpleString, "OK"u8.ToArray()).ThrowIfError();
 
-        Assert.Throws<ValkeyServerException>(RespValue.Bytes(RespType.SimpleError, "ERR x"u8.ToArray()).ThrowIfError);
+        var failure = Assert.Throws<ValkeyServerException>(
+            RespValue.Bytes(RespType.SimpleError, "ERR x"u8.ToArray()).ThrowIfError
+        );
+        Assert.Equal(ValkeyCommandDeliveryStatus.ReplyReceived, failure.DeliveryStatus);
         Assert.Throws<ValkeyServerException>(RespValue.Bytes(RespType.BlobError, "ERR x"u8.ToArray()).ThrowIfError);
     }
 }

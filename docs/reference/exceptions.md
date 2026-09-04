@@ -1,9 +1,15 @@
 # Exceptions
 
-All library-specific exceptions derive from `ValkeyException`.
+Command failures expose delivery certainty through `IValkeyCommandFailure` when the client can report
+it. Most library-specific exceptions derive from `ValkeyException`; timeout and cancellation types
+retain their standard BCL base classes.
 
 ```text
 Exception
+├── OperationCanceledException
+│   └── ValkeyCommandCanceledException
+├── TimeoutException
+│   └── ValkeyCommandTimeoutException
 └── ValkeyException
     ├── ValkeyProtocolException
     ├── ValkeyServerException
@@ -12,10 +18,22 @@ Exception
     └── ValkeyUnsupportedCommandException
 ```
 
+## Delivery status
+
+`IValkeyCommandFailure.DeliveryStatus` separates safe non-delivery from an ambiguous result:
+
+| Status | Meaning |
+|---|---|
+| `NotSent` | The client proved no command bytes were written. |
+| `MayHaveBeenSent` | The command may have reached Valkey. Do not blindly retry a mutation. |
+| `ReplyReceived` | Valkey returned a complete reply. This describes transport completion, not whether a script made changes before returning an error. |
+
 ## `ValkeyException`
 
 Base type. Constructors take `(string message)` and `(string message, Exception innerException)`.
-Catch it to handle every failure originating in this library.
+Catch it for protocol, server, connection, cluster, and unsupported-command failures. Catch
+`ValkeyCommandTimeoutException` and `ValkeyCommandCanceledException` separately when operation
+deadlines or caller cancellation are relevant.
 
 ## `ValkeyProtocolException`
 
@@ -51,7 +69,7 @@ catch (ValkeyServerException exception) when (exception.ErrorCode == "WRONGTYPE"
 ```
 
 Does **not** invalidate the connection: an error reply is a well-formed, fully consumed frame, so the
-client stays usable.
+client stays usable. Its delivery status is `ReplyReceived`.
 
 Thrown by `ExecuteAsync` and the convenience methods. **Not** thrown by `ExecutePipelineAsync`, which
 returns errors in place — call `ThrowIfError()` on each reply.
@@ -59,7 +77,25 @@ returns errors in place — call `ThrowIfError()` on each reply.
 ## `ValkeyConnectionException`
 
 The transport failed. Wraps the underlying `IOException` or `SocketException` as `InnerException`.
-Always invalidates the connection.
+Always invalidates the connection. Command-path instances conservatively report
+`MayHaveBeenSent`.
+
+## `ValkeyCommandCanceledException`
+
+The caller's token was cancelled after the command entered the FIFO pending queue. It derives from
+`OperationCanceledException`, reports `MayHaveBeenSent`, and invalidates the connection so a partial
+write or abandoned reply cannot desynchronize other callers. Cancellation before enqueue remains a
+plain `OperationCanceledException` and sends nothing.
+
+## `ValkeyCommandTimeoutException`
+
+The explicit timeout passed to `ExecuteWithDeadlineAsync` or `ExecutePipelineWithDeadlineAsync`
+expired. Its `Timeout` property reports the configured duration. `DeliveryStatus` is `NotSent` when
+admission did not complete and `MayHaveBeenSent` after enqueue.
+
+Unlike caller cancellation, an operation deadline does not interrupt socket I/O and does not
+invalidate the connection. The background reader retains and drains the timed-out operation's FIFO
+entry before assigning later replies.
 
 ## `ValkeyClusterException`
 
@@ -94,9 +130,9 @@ The library also surfaces standard exceptions directly:
 |---|---|
 | `ArgumentException` | Invalid host, `Username` without `Password`, both `NX` and `XX`, a null command in a pipeline, a command name that is not printable ASCII. |
 | `ArgumentNullException` | Null command, null command name, null argument array, null key sequence, null value passed to a `ValkeyArgument` conversion. |
-| `ArgumentOutOfRangeException` | Port, database, protocol, connect timeout, response/element/nesting bounds, or a non-positive expiry. |
+| `ArgumentOutOfRangeException` | Port, database, protocol, connect or operation timeout, response/element/nesting bounds, or a non-positive expiry. |
 | `TimeoutException` | `ConnectTimeout` elapsed during connect, TLS handshake, or the initial `HELLO`. |
-| `OperationCanceledException` | The supplied `CancellationToken` was cancelled. Invalidates the connection when I/O was in flight. |
+| `OperationCanceledException` | The supplied `CancellationToken` was cancelled before enqueue. |
 | `ObjectDisposedException` | The client was disposed or invalidated by an earlier failure. |
 | `InvalidOperationException` | A `RespValue` accessor was called for the wrong `RespType`. |
 
@@ -106,11 +142,12 @@ The library also surfaces standard exceptions directly:
 |---|---|
 | `ValkeyServerException` | yes |
 | `ValkeyUnsupportedCommandException` | yes |
+| `ValkeyCommandTimeoutException` | yes |
 | `InvalidOperationException` from an accessor | yes |
 | `ArgumentException` family (thrown before any write) | yes |
 | `ValkeyProtocolException` | no |
 | `ValkeyConnectionException` | no |
-| `OperationCanceledException` during I/O | no |
+| `ValkeyCommandCanceledException` after enqueue | no |
 
 See [Handle errors](../how-to/handle-errors.md) for the practical pattern and
 [Connection model](../explanation/connection-model.md) for why cancellation is fatal.

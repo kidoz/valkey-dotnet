@@ -43,6 +43,11 @@ handler are swallowed so a caller bug cannot desynchronize the wire.
 public Task<RespValue> ExecuteAsync(
     ValkeyCommand command,
     CancellationToken cancellationToken = default)
+
+public Task<RespValue> ExecuteWithDeadlineAsync(
+    ValkeyCommand command,
+    TimeSpan timeout,
+    CancellationToken cancellationToken = default)
 ```
 
 Sends one command and returns its reply. Throws `ValkeyServerException` when the server replies with
@@ -50,9 +55,20 @@ an error. Throws `ArgumentNullException` when `command` is null, and
 `ValkeyUnsupportedCommandException` — before writing anything — for a command that would change the
 connection state the client owns.
 
+`ExecuteWithDeadlineAsync` sets a deadline for this operation without cancelling socket I/O. If the
+deadline expires before the command enters the pending queue, `ValkeyCommandTimeoutException` reports
+`NotSent`. After enqueue it reports `MayHaveBeenSent`; the caller stops waiting, but the background
+reader drains the late reply so unrelated commands and the connection remain usable. A positive
+timeout no longer than approximately 49.7 days is required.
+
 ```csharp
 public Task<IReadOnlyList<RespValue>> ExecutePipelineAsync(
     IEnumerable<ValkeyCommand> commands,
+    CancellationToken cancellationToken = default)
+
+public Task<IReadOnlyList<RespValue>> ExecutePipelineWithDeadlineAsync(
+    IEnumerable<ValkeyCommand> commands,
+    TimeSpan timeout,
     CancellationToken cancellationToken = default)
 ```
 
@@ -63,6 +79,8 @@ Returns an empty list for an empty sequence. Throws `ArgumentNullException` for 
 `ArgumentException` when any element is null. Every command is checked against the unsupported list
 before the batch is written, so one `ValkeyUnsupportedCommandException` rejects the batch whole
 rather than half-sending it.
+The deadline method applies one deadline to the whole batch. After enqueue, every positional reply
+is still drained even when the caller's deadline has expired.
 
 ## Commands the client refuses
 
@@ -108,6 +126,14 @@ pipeline is rejected before writing.
 Cancellation before a caller enters the pending queue leaves the connection untouched. Cancellation
 after enqueue invalidates the connection: a write may be partial and abandoning a positional reply
 could assign it to another caller. Every other pending caller is faulted with
-`ValkeyConnectionException`; the canceled caller observes `OperationCanceledException`. An I/O or
-protocol failure likewise invalidates the connection and faults all pending work. Calling any method
-after invalidation throws `ObjectDisposedException`.
+`ValkeyConnectionException`; the canceled caller observes `ValkeyCommandCanceledException`, an
+`OperationCanceledException` subtype whose `DeliveryStatus` is `MayHaveBeenSent`. An I/O or protocol
+failure likewise invalidates the connection and faults all pending work. Calling any method after
+invalidation throws `ObjectDisposedException`.
+
+An explicit operation deadline has different semantics from caller cancellation. It never interrupts
+socket I/O or removes the pending FIFO entry, so it does not invalidate the connection. The deadline
+is measured from admission, but an in-progress socket write is allowed to reach its next safe
+completion point before the timeout is observed; interrupting a partially written RESP frame would
+make the shared connection unsafe. Timed-out entries remain bounded by `MaxPendingRequests` until
+their replies arrive or the connection terminates.

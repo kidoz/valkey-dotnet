@@ -50,27 +50,29 @@ cancelled operation, the client is permanently invalidated — every subsequent 
 **Only retry commands that are safe to repeat.** A `GET` is idempotent. An `INCR` is not: the first
 attempt may have applied before the connection broke, so a blind retry can double-count.
 
-## Distinguish your cancellation from a timeout
+## Use an isolated operation deadline
 
 ```csharp
-using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-
 try
 {
-    await valkey.ExecuteAsync(new ValkeyCommand("GET", key), cts.Token);
+    await valkey.ExecuteWithDeadlineAsync(new ValkeyCommand("GET", key), TimeSpan.FromSeconds(2));
 }
-catch (OperationCanceledException) when (cts.IsCancellationRequested)
+catch (ValkeyCommandTimeoutException exception)
 {
-    // Your deadline. The connection is now unusable — dispose and reconnect.
+    // NotSent is safe to retry. MayHaveBeenSent requires operation-specific reasoning.
+    Console.WriteLine(exception.DeliveryStatus);
 }
 ```
 
-`TimeoutException` means `ConnectTimeout` elapsed during `ConnectAsync`. `OperationCanceledException`
-means your token fired. Both leave nothing to reuse.
+The explicit deadline stops waiting for this operation without interrupting socket I/O. When it
+expires after enqueue, the background reader still drains the late reply, so unrelated callers and
+the connection remain usable. Do not blindly retry a mutation when `DeliveryStatus` is
+`MayHaveBeenSent`.
 
-Cancelling mid-command is expensive by design: the stream may sit between protocol frames, so the
-client cannot know where the next reply starts. Prefer a server-side bound where one exists rather
-than cancelling the client.
+Caller cancellation is intentionally stronger. Cancelling before enqueue sends nothing. Cancelling
+after enqueue throws `ValkeyCommandCanceledException`, reports `MayHaveBeenSent`, and invalidates the
+connection because the stream may sit between protocol frames. Prefer the explicit deadline method
+for an isolated deadline and a server-side bound where one exists.
 
 ## Check pipeline replies
 
@@ -85,9 +87,17 @@ foreach (var reply in replies)
 
 See [Pipeline commands](pipeline-commands.md) for per-reply handling.
 
-## Catch everything from this library
+## Catch library failures
 
 ```csharp
+catch (ValkeyCommandTimeoutException exception)
+{
+    logger.LogWarning(exception, "Valkey operation deadline elapsed");
+}
+catch (ValkeyCommandCanceledException exception)
+{
+    logger.LogWarning(exception, "Valkey operation was cancelled after enqueue");
+}
 catch (ValkeyException exception)
 {
     logger.LogError(exception, "Valkey operation failed");

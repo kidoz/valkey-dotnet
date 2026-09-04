@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
+using System.Diagnostics;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
@@ -13,6 +14,8 @@ namespace ValkeyDotNet;
 /// </summary>
 public sealed class ValkeyClient : IAsyncDisposable
 {
+    private const long MaxOperationTimeoutMilliseconds = uint.MaxValue - 1;
+
     /// <summary>
     /// Commands that redefine what the connection is rather than returning one ordinary reply.
     /// The client owns the connection's protocol, database, and reply framing, so it rejects these
@@ -130,13 +133,31 @@ public sealed class ValkeyClient : IAsyncDisposable
     }
 
     /// <summary>Executes any Valkey command and throws when the server returns an error reply.</summary>
-    public async Task<RespValue> ExecuteAsync(ValkeyCommand command, CancellationToken cancellationToken = default)
+    public async Task<RespValue> ExecuteAsync(ValkeyCommand command, CancellationToken cancellationToken = default) =>
+        await ExecuteCoreAsync(command, timeout: null, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Executes any Valkey command with an isolated deadline. Once the command is enqueued, expiry
+    /// stops waiting for its reply but leaves the connection reader to drain that reply.
+    /// </summary>
+    public async Task<RespValue> ExecuteWithDeadlineAsync(
+        ValkeyCommand command,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default
+    ) => await ExecuteCoreAsync(command, ValidateOperationTimeout(timeout), cancellationToken).ConfigureAwait(false);
+
+    private async Task<RespValue> ExecuteCoreAsync(
+        ValkeyCommand command,
+        TimeSpan? timeout,
+        CancellationToken cancellationToken
+    )
     {
         ArgumentNullException.ThrowIfNull(command);
         EnsureSupported(command);
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
-        var response = await SendMultiplexedAsync(RespWriter.Encode(command), cancellationToken).ConfigureAwait(false);
+        var response = await SendMultiplexedAsync(RespWriter.Encode(command), timeout, cancellationToken)
+            .ConfigureAwait(false);
         response.ThrowIfError();
         return response;
     }
@@ -148,6 +169,24 @@ public sealed class ValkeyClient : IAsyncDisposable
     public async Task<IReadOnlyList<RespValue>> ExecutePipelineAsync(
         IEnumerable<ValkeyCommand> commands,
         CancellationToken cancellationToken = default
+    ) => await ExecutePipelineCoreAsync(commands, timeout: null, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Executes a contiguous command batch with an isolated deadline. Expiry never abandons unread
+    /// positional replies; the background reader drains the entire batch before later replies.
+    /// </summary>
+    public async Task<IReadOnlyList<RespValue>> ExecutePipelineWithDeadlineAsync(
+        IEnumerable<ValkeyCommand> commands,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default
+    ) =>
+        await ExecutePipelineCoreAsync(commands, ValidateOperationTimeout(timeout), cancellationToken)
+            .ConfigureAwait(false);
+
+    private async Task<IReadOnlyList<RespValue>> ExecutePipelineCoreAsync(
+        IEnumerable<ValkeyCommand> commands,
+        TimeSpan? timeout,
+        CancellationToken cancellationToken
     )
     {
         ArgumentNullException.ThrowIfNull(commands);
@@ -169,7 +208,7 @@ public sealed class ValkeyClient : IAsyncDisposable
         var payloads = new byte[commandList.Length][];
         for (var i = 0; i < commandList.Length; i++)
             payloads[i] = RespWriter.Encode(commandList[i]);
-        return await SendMultiplexedAsync(payloads, cancellationToken).ConfigureAwait(false);
+        return await SendMultiplexedAsync(payloads, timeout, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<string> PingAsync(CancellationToken cancellationToken = default) =>
@@ -382,20 +421,33 @@ public sealed class ValkeyClient : IAsyncDisposable
 
     private void StartResponseLoop() => _responseLoop = ReadResponsesAsync();
 
-    private async Task<RespValue> SendMultiplexedAsync(byte[] payload, CancellationToken cancellationToken)
+    private async Task<RespValue> SendMultiplexedAsync(
+        byte[] payload,
+        TimeSpan? timeout,
+        CancellationToken cancellationToken
+    )
     {
+        var startedAt = Stopwatch.GetTimestamp();
+        using var timeoutCancellation = timeout is { } duration ? new CancellationTokenSource(duration) : null;
+        using var admissionCancellation = timeoutCancellation is null
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCancellation.Token);
+        var admissionToken = admissionCancellation?.Token ?? cancellationToken;
         var pending = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationTokenRegistration cancellationRegistration = default;
         var capacityAcquired = false;
         var enqueued = false;
+        var writeGateAcquired = false;
 
-        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await _pendingCapacity.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await _writeGate.WaitAsync(admissionToken).ConfigureAwait(false);
+            writeGateAcquired = true;
+            await _pendingCapacity.WaitAsync(admissionToken).ConfigureAwait(false);
             capacityAcquired = true;
             ThrowIfDisposed();
             cancellationToken.ThrowIfCancellationRequested();
+            timeoutCancellation?.Token.ThrowIfCancellationRequested();
 
             _pendingResponses.Enqueue(pending);
             enqueued = true;
@@ -429,16 +481,27 @@ public sealed class ValkeyClient : IAsyncDisposable
                 // Disposal has already completed every pending response with its terminal failure.
             }
         }
+        catch (OperationCanceledException)
+            when (!enqueued
+                && timeoutCancellation?.IsCancellationRequested == true
+                && !cancellationToken.IsCancellationRequested
+            )
+        {
+            throw new ValkeyCommandTimeoutException(timeout!.Value, ValkeyCommandDeliveryStatus.NotSent);
+        }
         finally
         {
             if (!enqueued && capacityAcquired)
                 _pendingCapacity.Release();
-            _writeGate.Release();
+            if (writeGateAcquired)
+                _writeGate.Release();
         }
 
         try
         {
-            return await pending.Task.ConfigureAwait(false);
+            return timeout is { } operationTimeout
+                ? await AwaitWithDeadlineAsync(pending.Task, operationTimeout, startedAt).ConfigureAwait(false)
+                : await pending.Task.ConfigureAwait(false);
         }
         finally
         {
@@ -448,9 +511,16 @@ public sealed class ValkeyClient : IAsyncDisposable
 
     private async Task<IReadOnlyList<RespValue>> SendMultiplexedAsync(
         byte[][] payloads,
+        TimeSpan? timeout,
         CancellationToken cancellationToken
     )
     {
+        var startedAt = Stopwatch.GetTimestamp();
+        using var timeoutCancellation = timeout is { } duration ? new CancellationTokenSource(duration) : null;
+        using var admissionCancellation = timeoutCancellation is null
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCancellation.Token);
+        var admissionToken = admissionCancellation?.Token ?? cancellationToken;
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -461,13 +531,16 @@ public sealed class ValkeyClient : IAsyncDisposable
         CancellationTokenRegistration cancellationRegistration = default;
         var capacityAcquired = 0;
         var enqueued = false;
-        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var writeGateAcquired = false;
         try
         {
+            await _writeGate.WaitAsync(admissionToken).ConfigureAwait(false);
+            writeGateAcquired = true;
             for (; capacityAcquired < pending.Length; capacityAcquired++)
-                await _pendingCapacity.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await _pendingCapacity.WaitAsync(admissionToken).ConfigureAwait(false);
             ThrowIfDisposed();
             cancellationToken.ThrowIfCancellationRequested();
+            timeoutCancellation?.Token.ThrowIfCancellationRequested();
 
             foreach (var response in pending)
                 _pendingResponses.Enqueue(response);
@@ -503,15 +576,33 @@ public sealed class ValkeyClient : IAsyncDisposable
                 // Disposal has already completed every pending response with its terminal failure.
             }
         }
+        catch (OperationCanceledException)
+            when (!enqueued
+                && timeoutCancellation?.IsCancellationRequested == true
+                && !cancellationToken.IsCancellationRequested
+            )
+        {
+            throw new ValkeyCommandTimeoutException(timeout!.Value, ValkeyCommandDeliveryStatus.NotSent);
+        }
         finally
         {
             if (!enqueued && capacityAcquired > 0)
                 _pendingCapacity.Release(capacityAcquired);
-            _writeGate.Release();
+            if (writeGateAcquired)
+                _writeGate.Release();
         }
 
         try
         {
+            if (timeout is { } operationTimeout)
+            {
+                var responseTasks = new Task<RespValue>[pending.Length];
+                for (var i = 0; i < pending.Length; i++)
+                    responseTasks[i] = pending[i].Task;
+                return await AwaitWithDeadlineAsync(Task.WhenAll(responseTasks), operationTimeout, startedAt)
+                    .ConfigureAwait(false);
+            }
+
             var responses = new RespValue[pending.Length];
             for (var i = 0; i < pending.Length; i++)
                 responses[i] = await pending[i].Task.ConfigureAwait(false);
@@ -587,7 +678,7 @@ public sealed class ValkeyClient : IAsyncDisposable
     {
         var cancelledAny = false;
         foreach (var response in pending)
-            cancelledAny |= response.TrySetCanceled(cancellationToken);
+            cancelledAny |= response.TrySetException(new ValkeyCommandCanceledException(cancellationToken));
         if (cancelledAny)
         {
             InvalidateConnection(
@@ -601,7 +692,7 @@ public sealed class ValkeyClient : IAsyncDisposable
 
     private void CancelPending(TaskCompletionSource<RespValue> pending, CancellationToken cancellationToken)
     {
-        if (pending.TrySetCanceled(cancellationToken))
+        if (pending.TrySetException(new ValkeyCommandCanceledException(cancellationToken)))
         {
             InvalidateConnection(
                 new ValkeyConnectionException(
@@ -609,6 +700,46 @@ public sealed class ValkeyClient : IAsyncDisposable
                     new OperationCanceledException(cancellationToken)
                 )
             );
+        }
+    }
+
+    internal static TimeSpan ValidateOperationTimeout(TimeSpan timeout)
+    {
+        if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > MaxOperationTimeoutMilliseconds)
+            throw new ArgumentOutOfRangeException(nameof(timeout));
+        return timeout;
+    }
+
+    private static async Task<T> AwaitWithDeadlineAsync<T>(Task<T> response, TimeSpan timeout, long startedAt)
+    {
+        var remaining = timeout - Stopwatch.GetElapsedTime(startedAt);
+        if (remaining <= TimeSpan.Zero)
+        {
+            _ = ObserveDetachedAsync(response);
+            throw new ValkeyCommandTimeoutException(timeout, ValkeyCommandDeliveryStatus.MayHaveBeenSent);
+        }
+
+        try
+        {
+            return await response.WaitAsync(remaining).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            _ = ObserveDetachedAsync(response);
+            throw new ValkeyCommandTimeoutException(timeout, ValkeyCommandDeliveryStatus.MayHaveBeenSent);
+        }
+    }
+
+    private static async Task ObserveDetachedAsync(Task response)
+    {
+        try
+        {
+            await response.ConfigureAwait(false);
+        }
+        catch
+        {
+            // The caller already observed its deadline. This continuation observes only the eventual
+            // terminal result while the response loop drains the positional reply.
         }
     }
 

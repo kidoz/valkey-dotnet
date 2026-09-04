@@ -519,10 +519,149 @@ public sealed class ValkeyClientTests
         await written.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
         await cancellation.CancelAsync();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending);
+        var failure = await Assert.ThrowsAsync<ValkeyCommandCanceledException>(async () => await pending);
+        Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, failure.DeliveryStatus);
         await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
             await client.PingAsync(TestContext.Current.CancellationToken)
         );
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncDeadlineDrainsTheLateReplyAndLeavesTheConnectionUsable()
+    {
+        var commandWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            commandWritten.SetResult();
+            await releaseReply.Task;
+            await session.SendAsync("+late\r\n");
+            await session.ReadCommandAsync();
+            await session.SendAsync("+PONG\r\n");
+        });
+        await using var client = await ValkeyClient.ConnectAsync(
+            server.ClientOptions(),
+            TestContext.Current.CancellationToken
+        );
+
+        var command = client.ExecuteWithDeadlineAsync(
+            new ValkeyCommand("ECHO", "late"),
+            TimeSpan.FromMilliseconds(500),
+            TestContext.Current.CancellationToken
+        );
+        await commandWritten.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        var failure = await Assert.ThrowsAsync<ValkeyCommandTimeoutException>(async () => await command);
+        Assert.Equal(TimeSpan.FromMilliseconds(500), failure.Timeout);
+        Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, failure.DeliveryStatus);
+
+        releaseReply.SetResult();
+        Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task ExecutePipelineAsyncDeadlineDrainsEveryLateReplyInOrder()
+    {
+        var batchWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReplies = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.ReadCommandAsync();
+            batchWritten.SetResult();
+            await releaseReplies.Task;
+            await session.SendAsync("+first\r\n+second\r\n");
+            await session.ReadCommandAsync();
+            await session.SendAsync("+PONG\r\n");
+        });
+        await using var client = await ValkeyClient.ConnectAsync(
+            server.ClientOptions(),
+            TestContext.Current.CancellationToken
+        );
+
+        var pipeline = client.ExecutePipelineWithDeadlineAsync(
+            [new ValkeyCommand("ECHO", "first"), new ValkeyCommand("ECHO", "second")],
+            TimeSpan.FromMilliseconds(500),
+            TestContext.Current.CancellationToken
+        );
+        await batchWritten.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        var failure = await Assert.ThrowsAsync<ValkeyCommandTimeoutException>(async () => await pipeline);
+        Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, failure.DeliveryStatus);
+
+        releaseReplies.SetResult();
+        Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task DeadlineWhilePendingCapacityIsFullReportsThatTheCommandWasNotSent()
+    {
+        var firstWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replyToFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            firstWritten.SetResult();
+            await replyToFirst.Task;
+            await session.SendAsync("+first\r\n");
+            await session.ReadCommandAsync();
+            await session.SendAsync("+PONG\r\n");
+        });
+        var options = server.ClientOptions();
+        await using var client = await ValkeyClient.ConnectAsync(
+            new ValkeyClientOptions
+            {
+                Host = options.Host,
+                Port = options.Port,
+                ConnectTimeout = options.ConnectTimeout,
+                MaxPendingRequests = 1,
+            },
+            TestContext.Current.CancellationToken
+        );
+
+        var first = client.ExecuteAsync(new ValkeyCommand("ECHO", "first"), TestContext.Current.CancellationToken);
+        await firstWritten.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        var failure = await Assert.ThrowsAsync<ValkeyCommandTimeoutException>(async () =>
+            await client.ExecuteWithDeadlineAsync(
+                new ValkeyCommand("PING"),
+                TimeSpan.FromMilliseconds(500),
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.Equal(ValkeyCommandDeliveryStatus.NotSent, failure.DeliveryStatus);
+
+        replyToFirst.SetResult();
+        Assert.Equal("first", (await first).AsString());
+        Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncRejectsAnInvalidDeadlineBeforeWriting()
+    {
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.SendAsync("+PONG\r\n");
+        });
+        await using var client = await ValkeyClient.ConnectAsync(
+            server.ClientOptions(),
+            TestContext.Current.CancellationToken
+        );
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+            await client.ExecuteWithDeadlineAsync(
+                new ValkeyCommand("PING"),
+                TimeSpan.Zero,
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -587,8 +726,12 @@ public sealed class ValkeyClientTests
 
         try
         {
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await cancelled);
-            await Assert.ThrowsAsync<ValkeyConnectionException>(async () => await collateral);
+            var cancellationFailure = await Assert.ThrowsAsync<ValkeyCommandCanceledException>(async () =>
+                await cancelled
+            );
+            Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, cancellationFailure.DeliveryStatus);
+            var connection = await Assert.ThrowsAsync<ValkeyConnectionException>(async () => await collateral);
+            Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, connection.DeliveryStatus);
             await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
                 await client.PingAsync(TestContext.Current.CancellationToken)
             );

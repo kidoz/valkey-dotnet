@@ -47,6 +47,47 @@ public sealed class ValkeyClusterClientTests
     }
 
     [Fact]
+    public async Task ExecuteAsyncDeadlineLeavesTheRoutedConnectionUsable()
+    {
+        const string key = "cluster-deadline";
+        var commandWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        FakeValkeyServer? server = null;
+        server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            Assert.Equal(["CLUSTER", "SHARDS"], await session.ReadCommandAsync());
+            await session.SendAsync(ShardsTopology(server!.Port));
+            Assert.Equal(["GET", key], await session.ReadCommandAsync());
+            commandWritten.SetResult();
+            await releaseReply.Task;
+            await session.SendAsync("$4\r\nlate\r\n");
+            Assert.Equal(["PING"], await session.ReadCommandAsync());
+            await session.SendAsync("+PONG\r\n");
+        });
+        await using var clusterServer = server;
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            Options(server.Port),
+            TestContext.Current.CancellationToken
+        );
+        ValkeyArgument routingKey = key;
+
+        var command = cluster.ExecuteWithDeadlineAsync(
+            routingKey,
+            new ValkeyCommand("GET", routingKey),
+            TimeSpan.FromMilliseconds(500),
+            TestContext.Current.CancellationToken
+        );
+        await commandWritten.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        var failure = await Assert.ThrowsAsync<ValkeyCommandTimeoutException>(async () => await command);
+        Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, failure.DeliveryStatus);
+
+        releaseReply.SetResult();
+        Assert.Equal("PONG", await cluster.PingAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task ConnectAsyncReadsShardsMapsEncodedForResp2()
     {
         FakeValkeyServer? seedServer = null;
@@ -314,12 +355,13 @@ public sealed class ValkeyClusterClientTests
             TestContext.Current.CancellationToken
         );
 
-        var replies = await cluster.ExecutePipelineAsync(
+        var replies = await cluster.ExecutePipelineWithDeadlineAsync(
             [
                 new ValkeyClusterCommand(lowKey, new ValkeyCommand("GET", lowKey)),
                 new ValkeyClusterCommand(highKey, new ValkeyCommand("GET", highKey)),
                 new ValkeyClusterCommand(secondLowKey, new ValkeyCommand("GET", secondLowKey)),
             ],
+            TimeSpan.FromSeconds(30),
             TestContext.Current.CancellationToken
         );
 

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net.Sockets;
 using System.Security.Authentication;
@@ -145,35 +146,81 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
         ValkeyArgument routingKey,
         ValkeyCommand command,
         CancellationToken cancellationToken = default
+    ) => await ExecuteCoreAsync(routingKey, command, timeout: null, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Executes a routed command with one isolated deadline across connection acquisition and every
+    /// bounded redirect attempt.
+    /// </summary>
+    public async Task<RespValue> ExecuteWithDeadlineAsync(
+        ValkeyArgument routingKey,
+        ValkeyCommand command,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default
+    ) =>
+        await ExecuteCoreAsync(routingKey, command, ValkeyClient.ValidateOperationTimeout(timeout), cancellationToken)
+            .ConfigureAwait(false);
+
+    private async Task<RespValue> ExecuteCoreAsync(
+        ValkeyArgument routingKey,
+        ValkeyCommand command,
+        TimeSpan? timeout,
+        CancellationToken cancellationToken
     )
     {
         ArgumentNullException.ThrowIfNull(command);
         ThrowIfDisposed();
+        var startedAt = Stopwatch.GetTimestamp();
 
         var slot = ClusterHashSlot.Calculate(routingKey.Bytes.Span);
         var endpoint =
             Volatile.Read(ref _slots)[slot]
             ?? throw new ValkeyClusterException($"No primary node is known for cluster slot {slot}.");
         var asking = false;
+        var attempted = false;
 
         for (var redirects = 0; ; redirects++)
         {
-            var client = await GetClientAsync(endpoint, cancellationToken).ConfigureAwait(false);
+            var client = await GetClientWithinDeadlineAsync(
+                    endpoint,
+                    timeout,
+                    startedAt,
+                    attempted ? ValkeyCommandDeliveryStatus.MayHaveBeenSent : ValkeyCommandDeliveryStatus.NotSent,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
             try
             {
                 RespValue response;
+                attempted = true;
                 if (asking)
                 {
-                    var replies = await client
-                        .ExecutePipelineAsync([new ValkeyCommand("ASKING"), command], cancellationToken)
-                        .ConfigureAwait(false);
+                    var replies = timeout is { } operationTimeout
+                        ? await client
+                            .ExecutePipelineWithDeadlineAsync(
+                                [new ValkeyCommand("ASKING"), command],
+                                GetRemainingTimeout(operationTimeout, startedAt),
+                                cancellationToken
+                            )
+                            .ConfigureAwait(false)
+                        : await client
+                            .ExecutePipelineAsync([new ValkeyCommand("ASKING"), command], cancellationToken)
+                            .ConfigureAwait(false);
                     replies[0].ThrowIfError();
                     response = replies[1];
                     response.ThrowIfError();
                 }
                 else
                 {
-                    response = await client.ExecuteAsync(command, cancellationToken).ConfigureAwait(false);
+                    response = timeout is { } operationTimeout
+                        ? await client
+                            .ExecuteWithDeadlineAsync(
+                                command,
+                                GetRemainingTimeout(operationTimeout, startedAt),
+                                cancellationToken
+                            )
+                            .ConfigureAwait(false)
+                        : await client.ExecuteAsync(command, cancellationToken).ConfigureAwait(false);
                 }
                 return response;
             }
@@ -219,10 +266,26 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
     public async Task<IReadOnlyList<RespValue>> ExecutePipelineAsync(
         IEnumerable<ValkeyClusterCommand> commands,
         CancellationToken cancellationToken = default
+    ) => await ExecutePipelineCoreAsync(commands, timeout: null, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Executes all routed node groups and redirects within one isolated deadline.</summary>
+    public async Task<IReadOnlyList<RespValue>> ExecutePipelineWithDeadlineAsync(
+        IEnumerable<ValkeyClusterCommand> commands,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default
+    ) =>
+        await ExecutePipelineCoreAsync(commands, ValkeyClient.ValidateOperationTimeout(timeout), cancellationToken)
+            .ConfigureAwait(false);
+
+    private async Task<IReadOnlyList<RespValue>> ExecutePipelineCoreAsync(
+        IEnumerable<ValkeyClusterCommand> commands,
+        TimeSpan? timeout,
+        CancellationToken cancellationToken
     )
     {
         ArgumentNullException.ThrowIfNull(commands);
         ThrowIfDisposed();
+        var startedAt = Stopwatch.GetTimestamp();
         var commandList = commands.ToArray();
         if (commandList.Length == 0)
             return Array.Empty<RespValue>();
@@ -246,7 +309,9 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
         }
 
         var responses = new RespValue[commandList.Length];
-        var tasks = groups.Values.Select(group => ExecutePipelineGroupAsync(group, responses, cancellationToken));
+        var tasks = groups.Values.Select(group =>
+            ExecutePipelineGroupAsync(group, responses, timeout, startedAt, cancellationToken)
+        );
         await Task.WhenAll(tasks).ConfigureAwait(false);
         return responses;
     }
@@ -484,6 +549,34 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
         }
     }
 
+    private async Task<ValkeyClient> GetClientWithinDeadlineAsync(
+        ClusterEndpoint endpoint,
+        TimeSpan? timeout,
+        long startedAt,
+        ValkeyCommandDeliveryStatus deliveryStatus,
+        CancellationToken cancellationToken
+    )
+    {
+        if (timeout is not { } operationTimeout)
+            return await GetClientAsync(endpoint, cancellationToken).ConfigureAwait(false);
+
+        var remaining = GetRemainingTimeout(operationTimeout, startedAt, deliveryStatus);
+        using var timeoutCancellation = new CancellationTokenSource(remaining);
+        using var admissionCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            timeoutCancellation.Token
+        );
+        try
+        {
+            return await GetClientAsync(endpoint, admissionCancellation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+            when (timeoutCancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new ValkeyCommandTimeoutException(operationTimeout, deliveryStatus);
+        }
+    }
+
     private async ValueTask RemoveClientAsync(ClusterEndpoint endpoint, ValkeyClient client)
     {
         await _clientGate.WaitAsync().ConfigureAwait(false);
@@ -506,17 +599,36 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
     private async Task ExecutePipelineGroupAsync(
         IReadOnlyList<PipelineItem> group,
         RespValue[] responses,
+        TimeSpan? timeout,
+        long startedAt,
         CancellationToken cancellationToken
     )
     {
         var endpoint = group[0].Endpoint;
-        var client = await GetClientAsync(endpoint, cancellationToken).ConfigureAwait(false);
+        var client = await GetClientWithinDeadlineAsync(
+                endpoint,
+                timeout,
+                startedAt,
+                // Other node groups execute concurrently, so the batch as a whole may already have
+                // reached Valkey even when this group is still acquiring its connection.
+                ValkeyCommandDeliveryStatus.MayHaveBeenSent,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
         IReadOnlyList<RespValue> groupedResponses;
         try
         {
-            groupedResponses = await client
-                .ExecutePipelineAsync(group.Select(static item => item.Command), cancellationToken)
-                .ConfigureAwait(false);
+            groupedResponses = timeout is { } operationTimeout
+                ? await client
+                    .ExecutePipelineWithDeadlineAsync(
+                        group.Select(static item => item.Command),
+                        GetRemainingTimeout(operationTimeout, startedAt),
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false)
+                : await client
+                    .ExecutePipelineAsync(group.Select(static item => item.Command), cancellationToken)
+                    .ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is ValkeyConnectionException or ValkeyProtocolException)
         {
@@ -540,7 +652,8 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
             var item = group[index];
             var response = groupedResponses[index];
             responses[item.Index] = IsRedirect(response)
-                ? await FollowPipelineRedirectAsync(item, response, cancellationToken).ConfigureAwait(false)
+                ? await FollowPipelineRedirectAsync(item, response, timeout, startedAt, cancellationToken)
+                    .ConfigureAwait(false)
                 : response;
         }
     }
@@ -548,6 +661,8 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
     private async Task<RespValue> FollowPipelineRedirectAsync(
         PipelineItem item,
         RespValue response,
+        TimeSpan? timeout,
+        long startedAt,
         CancellationToken cancellationToken
     )
     {
@@ -567,14 +682,40 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
             if (!redirect.Asking)
                 UpdateSlot(item.Slot, endpoint);
 
-            var client = await GetClientAsync(endpoint, cancellationToken).ConfigureAwait(false);
+            var client = await GetClientWithinDeadlineAsync(
+                    endpoint,
+                    timeout,
+                    startedAt,
+                    ValkeyCommandDeliveryStatus.MayHaveBeenSent,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
             try
             {
-                var replies = redirect.Asking
-                    ? await client
-                        .ExecutePipelineAsync([new ValkeyCommand("ASKING"), item.Command], cancellationToken)
-                        .ConfigureAwait(false)
-                    : await client.ExecutePipelineAsync([item.Command], cancellationToken).ConfigureAwait(false);
+                IReadOnlyList<RespValue> replies;
+                if (timeout is { } operationTimeout)
+                {
+                    var remaining = GetRemainingTimeout(operationTimeout, startedAt);
+                    replies = redirect.Asking
+                        ? await client
+                            .ExecutePipelineWithDeadlineAsync(
+                                [new ValkeyCommand("ASKING"), item.Command],
+                                remaining,
+                                cancellationToken
+                            )
+                            .ConfigureAwait(false)
+                        : await client
+                            .ExecutePipelineWithDeadlineAsync([item.Command], remaining, cancellationToken)
+                            .ConfigureAwait(false);
+                }
+                else
+                {
+                    replies = redirect.Asking
+                        ? await client
+                            .ExecutePipelineAsync([new ValkeyCommand("ASKING"), item.Command], cancellationToken)
+                            .ConfigureAwait(false)
+                        : await client.ExecutePipelineAsync([item.Command], cancellationToken).ConfigureAwait(false);
+                }
                 if (redirect.Asking)
                     replies[0].ThrowIfError();
                 response = replies[replies.Count - 1];
@@ -602,6 +743,16 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
     private static bool IsRedirect(RespValue response) =>
         response.Type is RespType.SimpleError or RespType.BlobError
         && response.ToServerException().ErrorCode is "MOVED" or "ASK";
+
+    private static TimeSpan GetRemainingTimeout(
+        TimeSpan timeout,
+        long startedAt,
+        ValkeyCommandDeliveryStatus deliveryStatus = ValkeyCommandDeliveryStatus.MayHaveBeenSent
+    )
+    {
+        var remaining = timeout - Stopwatch.GetElapsedTime(startedAt);
+        return remaining > TimeSpan.Zero ? remaining : throw new ValkeyCommandTimeoutException(timeout, deliveryStatus);
+    }
 
     private ValkeyClientOptions CreateNodeOptions(ClusterEndpoint endpoint) =>
         new()
