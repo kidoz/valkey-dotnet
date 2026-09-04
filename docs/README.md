@@ -10,6 +10,9 @@ quadrants, because each serves a different need and mixing them makes all four w
 | **[Reference](reference/)** | Information | Working, and need a precise fact | [ValkeyClusterClient](reference/valkey-cluster-client.md), [ValkeyClient](reference/valkey-client.md), [Client options](reference/client-options.md), [RESP values](reference/resp-values.md), [Exceptions](reference/exceptions.md), [Valkey compatibility](reference/valkey-compatibility.md), [Performance baseline](reference/performance-baseline.md) |
 | **[Explanation](explanation/)** | Understanding | Reflecting, and want to know why | [Why managed-only](explanation/why-managed-only.md), [Connection model](explanation/connection-model.md) |
 
+Script execution: [Execute reusable scripts](how-to/execute-scripts.md) and
+[script API reference](reference/scripts.md).
+
 ## Writing docs here
 
 Pick the quadrant before you write, and keep the page inside it:

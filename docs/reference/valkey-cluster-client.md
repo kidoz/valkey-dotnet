@@ -1,5 +1,8 @@
 # `ValkeyClusterClient`
 
+For key-routed Lua scripts, see the [script API reference](scripts.md). Script methods validate that
+all keys share a slot and recover the script cache on the selected physical connection.
+
 An asynchronous key-routed client for Valkey Cluster. Implements `IAsyncDisposable`.
 
 Namespace: `ValkeyDotNet`.

@@ -49,6 +49,39 @@ public sealed class ValkeyClusterIntegrationTests
             );
             Assert.Equal(["value-0", "value-1", "value-2"], reads.Select(static reply => reply.AsString()));
 
+            var script = new ValkeyScript("return {redis.call('GET', KEYS[1]), ARGV[1]}");
+            byte[] owner = [0, 255, 13, 10];
+            foreach (var key in keys)
+            {
+                await cluster.ExecuteAsync(
+                    key,
+                    new ValkeyCommand("SCRIPT", "FLUSH"),
+                    TestContext.Current.CancellationToken
+                );
+                var results = await Task.WhenAll(
+                    Enumerable
+                        .Range(0, 8)
+                        .Select(_ =>
+                            cluster.ExecuteScriptWithDeadlineAsync(
+                                script,
+                                [key],
+                                [owner],
+                                TimeSpan.FromSeconds(10),
+                                TestContext.Current.CancellationToken
+                            )
+                        )
+                );
+                Assert.All(results, result => Assert.Equal(owner, result.AsArray()[1].AsBytes().ToArray()));
+                Assert.All(
+                    results,
+                    result =>
+                        Assert.Equal(
+                            "value-" + Array.IndexOf(keys, key).ToString(CultureInfo.InvariantCulture),
+                            result.AsArray()[0].AsString()
+                        )
+                );
+            }
+
             await cluster.RefreshTopologyAsync(TestContext.Current.CancellationToken);
             operationsCompleted = true;
         }

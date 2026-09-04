@@ -12,7 +12,7 @@ namespace ValkeyDotNet;
 /// are opened lazily and reused per primary node; MOVED and ASK redirects are followed with a
 /// bounded retry count.
 /// </summary>
-public sealed class ValkeyClusterClient : IAsyncDisposable
+public sealed partial class ValkeyClusterClient : IAsyncDisposable
 {
     private const int MaxEndpointCharacters = 1_024;
 
@@ -172,7 +172,8 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
         ValkeyArgument routingKey,
         ValkeyCommand command,
         TimeSpan? timeout,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ValkeyScript? script = null
     )
     {
         ArgumentNullException.ThrowIfNull(command);
@@ -200,7 +201,19 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
             {
                 RespValue response;
                 attempted = true;
-                if (asking)
+                if (script is not null)
+                {
+                    response = await client
+                        .ExecuteScriptCoreAsync(
+                            script,
+                            command,
+                            asking,
+                            timeout is { } scriptTimeout ? GetRemainingTimeout(scriptTimeout, startedAt) : null,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false);
+                }
+                else if (asking)
                 {
                     var replies = timeout is { } operationTimeout
                         ? await client

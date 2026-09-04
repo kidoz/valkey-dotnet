@@ -117,6 +117,9 @@ Anything not listed goes through `ExecuteAsync`; see
 
 ## Concurrency and failure
 
+Structured script execution is covered in the [script API reference](scripts.md), including
+`ExecuteScriptAsync`, `ExecuteScriptWithDeadlineAsync`, and source-bearing pipeline commands.
+
 One `SemaphoreSlim` serializes writes only. Each written command enters a FIFO pending-response queue,
 and one background reader assigns the next non-push frame to the next pending command. Concurrent
 callers therefore share one socket without interleaving command bytes or running multiple readers.

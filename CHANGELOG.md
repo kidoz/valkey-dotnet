@@ -4,6 +4,11 @@
 
 ### Added
 
+- Binary-safe structured Lua scripts with separate keys and arguments, cached `EVALSHA` execution,
+  coordinated `NOSCRIPT` recovery, isolated deadlines, and source-bearing pipeline commands.
+- Cluster script routing with cross-slot validation and fresh `ASKING` for every recovery attempt.
+- Live script-cache recovery and owner-checked lease release/extension coverage.
+
 - Explicit command delivery status for server, protocol, transport, cancellation, and operation-timeout
   failures.
 - Isolated per-operation deadline methods for standalone and cluster generic commands and pipelines;

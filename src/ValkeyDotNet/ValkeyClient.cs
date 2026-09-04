@@ -12,7 +12,7 @@ namespace ValkeyDotNet;
 /// An asynchronous, dependency-free client for a single Valkey node.
 /// The connection is safe for concurrent callers and matches multiplexed replies in wire order.
 /// </summary>
-public sealed class ValkeyClient : IAsyncDisposable
+public sealed partial class ValkeyClient : IAsyncDisposable
 {
     private const long MaxOperationTimeoutMilliseconds = uint.MaxValue - 1;
 
