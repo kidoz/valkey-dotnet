@@ -6,6 +6,12 @@ public sealed class ValkeyConnectionOwnerOptions
     /// <summary>Immutable connection settings reused for every physical connection.</summary>
     public ValkeyClientOptions Connection { get; init; } = new();
 
+    /// <summary>
+    /// Enables process-wide owner metrics and listener-selected activities. Off by default. No
+    /// command names, arguments, endpoint labels, credentials, or exception messages are recorded.
+    /// </summary>
+    public bool EnableTelemetry { get; init; }
+
     /// <summary>Maximum admitted operations, including connected operations and reconnect waiters.</summary>
     public int MaxConcurrentOperations { get; init; } = 1024;
 

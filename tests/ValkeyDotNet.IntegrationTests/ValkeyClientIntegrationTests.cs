@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Globalization;
 
 namespace ValkeyDotNet.IntegrationTests;
@@ -11,6 +13,33 @@ public sealed class ValkeyClientIntegrationTests
     {
         var endpoint = GetEndpoint();
         var token = TestContext.Current.CancellationToken;
+        var attempts = 0L;
+        var reconnects = 0L;
+        var activities = 0;
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var metrics = new MeterListener();
+        metrics.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == ValkeyDiagnostics.MeterName)
+                listener.EnableMeasurementEvents(instrument);
+        };
+        metrics.SetMeasurementEventCallback<long>(
+            (instrument, value, _, _) =>
+            {
+                if (instrument.Name == "valkey.owner.connection.attempts")
+                    Interlocked.Add(ref attempts, value);
+                if (instrument.Name == "valkey.owner.reconnects" && Interlocked.Add(ref reconnects, value) == 3)
+                    recovered.TrySetResult();
+            }
+        );
+        metrics.Start();
+        using var tracing = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == ValkeyDiagnostics.ActivitySourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = _ => Interlocked.Increment(ref activities),
+        };
+        ActivitySource.AddActivityListener(tracing);
         var connection = new ValkeyClientOptions
         {
             Host = endpoint.Host,
@@ -19,7 +48,9 @@ public sealed class ValkeyClientIntegrationTests
             ClientName = "valkey-owner-recovery",
             Database = 2,
         };
-        await using var owner = new ValkeyConnectionOwner(new ValkeyConnectionOwnerOptions { Connection = connection });
+        await using var owner = new ValkeyConnectionOwner(
+            new ValkeyConnectionOwnerOptions { Connection = connection, EnableTelemetry = true }
+        );
         await using var control = await ValkeyClient.ConnectAsync(connection, token);
         var script = new ValkeyScript("return ARGV[1]");
         var previousId = (await owner.ExecuteAsync(new ValkeyCommand("CLIENT", "ID"), token)).AsInt64();
@@ -68,6 +99,10 @@ public sealed class ValkeyClientIntegrationTests
             );
             previousId = currentId;
         }
+        await recovered.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+        Assert.Equal(4, Interlocked.Read(ref attempts));
+        Assert.Equal(3, Interlocked.Read(ref reconnects));
+        Assert.Equal(10, Volatile.Read(ref activities));
     }
 
     private static (string Host, int Port) GetEndpoint()

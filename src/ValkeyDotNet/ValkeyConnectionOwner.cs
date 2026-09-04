@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Runtime.ExceptionServices;
 using System.Security.Authentication;
 using System.Security.Cryptography;
+using ValkeyDotNet.Diagnostics;
 
 namespace ValkeyDotNet;
 
@@ -50,13 +51,19 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
 
     /// <summary>Warms the connection using bounded shared connection attempts.</summary>
     public async Task ConnectAsync(CancellationToken cancellationToken = default) =>
-        _ = await RunAsync(static (_, _, _) => Task.FromResult(true), null, false, cancellationToken)
+        _ = await RunAsync(static (_, _, _) => Task.FromResult(true), null, false, "connect", cancellationToken)
             .ConfigureAwait(false);
 
     public Task<RespValue> ExecuteAsync(ValkeyCommand command, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return RunAsync((client, _, token) => client.ExecuteAsync(command, token), null, false, cancellationToken);
+        return RunAsync(
+            (client, _, token) => client.ExecuteAsync(command, token),
+            null,
+            false,
+            "command",
+            cancellationToken
+        );
     }
 
     /// <summary>One isolated deadline covers acquisition and execution. The command is not replayed.</summary>
@@ -71,6 +78,7 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
             (client, remaining, token) => client.ExecuteWithDeadlineAsync(command, remaining!.Value, token),
             ValkeyClient.ValidateOperationTimeout(timeout),
             false,
+            "command",
             cancellationToken
         );
     }
@@ -83,7 +91,13 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
     public Task<RespValue> ExecuteRetryableAsync(ValkeyCommand command, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return RunAsync((client, _, token) => client.ExecuteAsync(command, token), null, true, cancellationToken);
+        return RunAsync(
+            (client, _, token) => client.ExecuteAsync(command, token),
+            null,
+            true,
+            "command",
+            cancellationToken
+        );
     }
 
     /// <summary>Authorizes bounded transport replay within one acquisition-and-execution deadline.</summary>
@@ -98,6 +112,7 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
             (client, remaining, token) => client.ExecuteWithDeadlineAsync(command, remaining!.Value, token),
             ValkeyClient.ValidateOperationTimeout(timeout),
             true,
+            "command",
             cancellationToken
         );
     }
@@ -113,6 +128,7 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
             (client, _, token) => client.ExecutePipelineAsync(commands, token),
             null,
             false,
+            "pipeline",
             cancellationToken
         );
     }
@@ -131,6 +147,7 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
             (client, _, token) => client.ExecuteScriptAsync(script, keys, arguments, token),
             null,
             false,
+            "script",
             cancellationToken
         );
     }
@@ -147,6 +164,7 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
             (client, remaining, token) => client.ExecutePipelineWithDeadlineAsync(commands, remaining!.Value, token),
             ValkeyClient.ValidateOperationTimeout(timeout),
             false,
+            "pipeline",
             cancellationToken
         );
     }
@@ -168,11 +186,35 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
                 client.ExecuteScriptWithDeadlineAsync(script, keys, arguments, remaining!.Value, token),
             ValkeyClient.ValidateOperationTimeout(timeout),
             false,
+            "script",
             cancellationToken
         );
     }
 
-    private async Task<T> RunAsync<T>(
+    private Task<T> RunAsync<T>(
+        Func<ValkeyClient, TimeSpan?, CancellationToken, Task<T>> operation,
+        TimeSpan? timeout,
+        bool retryable,
+        string kind,
+        CancellationToken cancellationToken
+    ) =>
+        _options.EnableTelemetry
+            ? RunWithTelemetryAsync(operation, timeout, retryable, kind, cancellationToken)
+            : RunCoreAsync(operation, timeout, retryable, cancellationToken);
+
+    private Task<T> RunWithTelemetryAsync<T>(
+        Func<ValkeyClient, TimeSpan?, CancellationToken, Task<T>> operation,
+        TimeSpan? timeout,
+        bool retryable,
+        string kind,
+        CancellationToken cancellationToken
+    ) =>
+        OwnerDiagnostics.TrackOperationAsync(
+            kind,
+            () => RunCoreAsync(operation, timeout, retryable, cancellationToken)
+        );
+
+    private async Task<T> RunCoreAsync<T>(
         Func<ValkeyClient, TimeSpan?, CancellationToken, Task<T>> operation,
         TimeSpan? timeout,
         bool retryable,
@@ -307,9 +349,11 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
                 ValkeyClient candidate;
                 try
                 {
-                    candidate = await ValkeyClient
-                        .ConnectAsync(_options.Connection, _shutdown.Token)
-                        .ConfigureAwait(false);
+                    candidate = _options.EnableTelemetry
+                        ? await OwnerDiagnostics
+                            .TrackConnectionAsync(() => ValkeyClient.ConnectAsync(_options.Connection, _shutdown.Token))
+                            .ConfigureAwait(false)
+                        : await ValkeyClient.ConnectAsync(_options.Connection, _shutdown.Token).ConfigureAwait(false);
                 }
                 catch (Exception exception)
                     when (exception is IOException or SocketException or TimeoutException or ValkeyConnectionException)
@@ -325,8 +369,10 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
                     continue;
                 }
                 bool accepted;
+                bool reconnected;
                 lock (_sync)
                 {
+                    reconnected = _everConnected;
                     accepted = _disposal is null && !candidate.IsDisposed;
                     if (accepted)
                     {
@@ -340,7 +386,11 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
                     }
                 }
                 if (accepted)
+                {
+                    if (reconnected && _options.EnableTelemetry)
+                        OwnerDiagnostics.Reconnected();
                     return;
+                }
                 await candidate.DisposeAsync().ConfigureAwait(false);
                 _shutdown.Token.ThrowIfCancellationRequested();
                 lock (_sync)

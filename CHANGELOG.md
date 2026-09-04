@@ -4,6 +4,10 @@
 
 ### Added
 
+- Opt-in connection-owner metrics and activity tracing using only BCL APIs, with fixed-cardinality
+  operation/error tags, reconnect/attempt counts, durations, and an active-operation gauge.
+- Listener exception isolation, privacy and ambient-trace regression tests, and live recovery
+  telemetry assertions; no command text, keys, values, credentials, or endpoint labels are recorded.
 - Standalone connection ownership with shared bounded connection attempts, capped exponential
   backoff and jitter, fail-fast admission, lifecycle health, and explicit per-operation retry opt-in.
 - Owner command, pipeline, and script deadlines cover connection acquisition and execution while

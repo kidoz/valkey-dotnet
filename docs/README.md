@@ -16,6 +16,9 @@ Script execution: [Execute reusable scripts](how-to/execute-scripts.md) and
 Standalone recovery: [Recover a standalone connection](how-to/recover-standalone-connections.md)
 and [connection owner reference](reference/connection-owner.md).
 
+Observability: [Collect owner telemetry](how-to/collect-telemetry.md) and
+[diagnostics reference](reference/diagnostics.md).
+
 ## Writing docs here
 
 Pick the quadrant before you write, and keep the page inside it:

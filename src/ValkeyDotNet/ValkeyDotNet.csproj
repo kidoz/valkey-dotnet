@@ -25,6 +25,8 @@
         CA1031  ReadNonPushAsync deliberately swallows user push-callback exceptions so a caller
                 bug cannot desynchronize the wire. Connection-owner background attempts settle
                 shared tasks and observe abandoned failures instead of leaking unobserved tasks.
+                OwnerDiagnostics isolates instrument publication, sampling, measurement, and activity
+                listener exceptions so telemetry never replaces a command's result or failure.
         CA1032  Exception constructors are intentionally constrained: ValkeyServerException derives
                 ErrorCode from the message, and ValkeyConnectionException always wraps an inner cause.
         CA1065  ValkeyArgument implicit conversions throw on null instead of silently encoding an

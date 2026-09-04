@@ -48,6 +48,9 @@ The unreleased development version also includes structured scripting, isolated 
 [standalone connection owner](docs/reference/connection-owner.md) with bounded recovery and explicit
 retry authorization. These additions are not in the published 1.0.0 package.
 
+Owner [metrics and tracing](docs/reference/diagnostics.md) are also available in development,
+explicitly opt-in and free of command or payload capture.
+
 ## Requirements
 
 - .NET 10 SDK (pinned via `global.json`)

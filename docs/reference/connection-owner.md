@@ -50,6 +50,7 @@ can produce incorrect ownership or timing assumptions.
 | Property | Default | Bound / meaning |
 |---|---|---|
 | `Connection` | `new ValkeyClientOptions()` | Same validated settings object used for every initial and replacement connection. |
+| `EnableTelemetry` | `false` | Opts this owner into fixed-cardinality metrics and listener-selected activities; see [diagnostics](diagnostics.md). |
 | `MaxConcurrentOperations` | 1024 | 1–1,048,576; counts all admitted operations, including reconnect waiters and active commands. |
 | `MaxConnectAttempts` | 3 | 1–100 attempts per shared acquisition cycle. |
 | `InitialReconnectDelay` | 100 ms | At least 1 ms and no greater than `MaxReconnectDelay`. |
