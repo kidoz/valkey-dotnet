@@ -2,14 +2,16 @@
     <PropertyGroup>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <PackageId>ValkeyDotNet</PackageId>
-        <Version>0.1.0</Version>
+        <Version>1.0.0</Version>
         <Description>A .NET client library for Valkey</Description>
         <Authors>Aleksandr Pavlov</Authors>
         <Copyright>Copyright (c) 2026 Aleksandr Pavlov</Copyright>
         <PackageProjectUrl>https://github.com/kidoz/valkey-dotnet</PackageProjectUrl>
         <RepositoryUrl>https://github.com/kidoz/valkey-dotnet</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageReleaseNotes>First stable release with RESP2/RESP3, TLS, pipelining, single-socket multiplexing, bounded parsing, and primary-routed Valkey Cluster support.</PackageReleaseNotes>
         <PackageTags>valkey;redis;resp;cache;database</PackageTags>
         <!--
       Suppressions for AnalysisLevel=latest-all. Each is a deliberate design decision;
@@ -45,5 +47,6 @@
     </PropertyGroup>
     <ItemGroup>
         <None Include="../../README.md" Pack="true" PackagePath="/" />
+        <None Include="../../CHANGELOG.md" Pack="true" PackagePath="/" />
     </ItemGroup>
 </Project>

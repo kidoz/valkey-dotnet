@@ -18,9 +18,9 @@ with RESP2, RESP3, TLS, pipelining, and cluster routing.
 
 ## Status
 
-ValkeyDotNet 0.1.0 is an implementation-quality client for standalone Valkey and primary-routed
-Valkey Cluster workloads. Supported features are implemented and tested; unsupported behavior fails
-explicitly.
+ValkeyDotNet 1.0.0 is the first stable release for standalone Valkey and primary-routed Valkey
+Cluster workloads. Supported features are implemented and tested; unsupported behavior fails
+explicitly. See the [changelog](CHANGELOG.md) for release notes.
 
 ValkeyDotNet implements **its own** managed RESP protocol. The shipping library has **zero** runtime
 package dependencies — no Rust core, no native library, no code generation, no third-party NuGet
@@ -54,7 +54,7 @@ pooling, automatic reconnect/retry, and subscription-mode Pub/Sub. See
 ## Installation
 
 ```xml
-<PackageReference Include="ValkeyDotNet" Version="0.1.0" />
+<PackageReference Include="ValkeyDotNet" Version="1.0.0" />
 ```
 
 ## Documentation
@@ -67,7 +67,8 @@ Documentation follows [Diátaxis](https://diataxis.fr/). Start at [`docs/`](docs
   [Pipeline commands](docs/how-to/pipeline-commands.md) ·
   [Send any command](docs/how-to/send-any-command.md) ·
   [Handle errors](docs/how-to/handle-errors.md) ·
-  [Run live integration tests](docs/how-to/run-live-integration-tests.md)
+  [Run live integration tests](docs/how-to/run-live-integration-tests.md) ·
+  [Publish a release](docs/how-to/publish-a-release.md)
 - Reference: [`ValkeyClient`](docs/reference/valkey-client.md) ·
   [`ValkeyClusterClient`](docs/reference/valkey-cluster-client.md) ·
   [Client options](docs/reference/client-options.md) ·

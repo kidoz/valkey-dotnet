@@ -1,0 +1,166 @@
+name: Integration
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+
+jobs:
+  standalone:
+    name: Valkey ${{ matrix.valkey-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - valkey-version: "9.1"
+            service: valkey-9
+            endpoint: 127.0.0.1:6379
+          - valkey-version: "8.1"
+            service: valkey-8
+            endpoint: 127.0.0.1:6380
+          - valkey-version: "7.2"
+            service: valkey-7
+            endpoint: 127.0.0.1:6381
+
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: 1
+      VALKEYDOTNET_ENDPOINT: ${{ matrix.endpoint }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+
+      - name: Restore packages
+        run: dotnet restore ValkeyDotNet.slnx
+
+      - name: Build
+        run: dotnet build ValkeyDotNet.slnx --configuration Release --no-restore
+
+      - name: Start Valkey
+        run: docker compose -f dev/docker-compose.yml up -d --wait ${{ matrix.service }}
+
+      - name: Run integration tests
+        run: >
+          dotnet run --project tests/ValkeyDotNet.IntegrationTests
+          --configuration Release --no-build
+
+      - name: Collect Valkey logs
+        if: always()
+        run: |
+          mkdir -p artifacts/integration
+          docker compose -f dev/docker-compose.yml logs --no-color > artifacts/integration/valkey.log || true
+
+      - name: Upload Valkey logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: valkey-${{ matrix.valkey-version }}-logs
+          path: artifacts/integration/valkey.log
+          if-no-files-found: warn
+
+      - name: Stop Valkey
+        if: always()
+        run: docker compose -f dev/docker-compose.yml down -v
+
+  cluster:
+    name: Three-primary cluster
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: 1
+      VALKEYDOTNET_CLUSTER_ENDPOINTS: 127.0.0.1:16379,127.0.0.1:16380,127.0.0.1:16381
+      VALKEYDOTNET_CLUSTER_MAPPED_HOST: 127.0.0.1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+
+      - name: Restore packages
+        run: dotnet restore ValkeyDotNet.slnx
+
+      - name: Build
+        run: dotnet build ValkeyDotNet.slnx --configuration Release --no-restore
+
+      - name: Start cluster nodes
+        run: >
+          docker compose -f dev/docker-compose.cluster.yml up -d --wait
+          valkey-cluster-1 valkey-cluster-2 valkey-cluster-3
+
+      - name: Initialize cluster
+        run: docker compose -f dev/docker-compose.cluster.yml run --rm cluster-init
+
+      - name: Wait for cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          services=(valkey-cluster-1 valkey-cluster-2 valkey-cluster-3)
+          ports=(16379 16380 16381)
+          for index in 0 1 2; do
+            for attempt in {1..40}; do
+              if docker compose -f dev/docker-compose.cluster.yml exec -T "${services[$index]}" \
+                valkey-cli -p "${ports[$index]}" cluster info 2>/dev/null \
+                | tr -d '\r' | grep -q '^cluster_state:ok$'; then
+                break
+              fi
+              if [ "${attempt}" = "40" ]; then
+                docker compose -f dev/docker-compose.cluster.yml logs --tail=200 >&2 || true
+                exit 1
+              fi
+              sleep 0.25
+            done
+          done
+
+      - name: Run cluster integration tests
+        run: >
+          dotnet run --project tests/ValkeyDotNet.IntegrationTests
+          --configuration Release --no-build
+
+      - name: Collect cluster logs
+        if: always()
+        run: |
+          mkdir -p artifacts/integration
+          docker compose -f dev/docker-compose.cluster.yml logs --no-color > artifacts/integration/cluster.log || true
+
+      - name: Upload cluster logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: valkey-cluster-logs
+          path: artifacts/integration/cluster.log
+          if-no-files-found: warn
+
+      - name: Stop cluster
+        if: always()
+        run: docker compose -f dev/docker-compose.cluster.yml down -v
