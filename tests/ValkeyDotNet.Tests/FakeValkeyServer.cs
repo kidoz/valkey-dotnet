@@ -24,10 +24,15 @@ internal sealed class FakeValkeyServer : IAsyncDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private readonly List<string[]> _received = [];
 
-    private FakeValkeyServer(TcpListener listener, X509Certificate2? certificate, Func<FakeValkeySession, Task> handler)
+    private FakeValkeyServer(
+        TcpListener listener,
+        X509Certificate2? certificate,
+        int sessionCount,
+        Func<int, FakeValkeySession, Task> handler
+    )
     {
         _listener = listener;
-        Session = RunAsync(certificate, handler);
+        Session = RunAsync(certificate, sessionCount, handler);
     }
 
     /// <summary>The scripted handler's task. Transport faults are absorbed; assertion failures are not.</summary>
@@ -42,7 +47,15 @@ internal sealed class FakeValkeyServer : IAsyncDisposable
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        return new FakeValkeyServer(listener, certificate, handler);
+        return new FakeValkeyServer(listener, certificate, 1, (_, session) => handler(session));
+    }
+
+    public static FakeValkeyServer StartMany(int sessionCount, Func<int, FakeValkeySession, Task> handler)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(sessionCount, 1);
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        return new FakeValkeyServer(listener, certificate: null, sessionCount, handler);
     }
 
     public ValkeyClientOptions ClientOptions() =>
@@ -86,13 +99,43 @@ internal sealed class FakeValkeyServer : IAsyncDisposable
         _shutdown.Dispose();
     }
 
-    private async Task RunAsync(X509Certificate2? certificate, Func<FakeValkeySession, Task> handler)
+    private async Task RunAsync(
+        X509Certificate2? certificate,
+        int sessionCount,
+        Func<int, FakeValkeySession, Task> handler
+    )
     {
-        TcpClient? connection = null;
+        var sessions = new List<Task>(sessionCount);
+        try
+        {
+            for (var index = 0; index < sessionCount; index++)
+            {
+                var connection = await _listener.AcceptTcpClientAsync(_shutdown.Token);
+                sessions.Add(RunSessionAsync(connection, certificate, index, handler));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The test finished before every expected connection was opened.
+        }
+        catch (ObjectDisposedException)
+        {
+            // Disposal closes the listener underneath a pending accept.
+        }
+
+        await Task.WhenAll(sessions);
+    }
+
+    private async Task RunSessionAsync(
+        TcpClient connection,
+        X509Certificate2? certificate,
+        int index,
+        Func<int, FakeValkeySession, Task> handler
+    )
+    {
         SslStream? tls = null;
         try
         {
-            connection = await _listener.AcceptTcpClientAsync(_shutdown.Token);
             connection.NoDelay = true;
             using var registration = _shutdown.Token.Register(connection.Dispose);
 
@@ -108,7 +151,7 @@ internal sealed class FakeValkeyServer : IAsyncDisposable
                 stream = tls;
             }
 
-            await handler(new FakeValkeySession(stream, _received));
+            await handler(index, new FakeValkeySession(stream, _received));
         }
         catch (OperationCanceledException)
         {
@@ -130,7 +173,7 @@ internal sealed class FakeValkeyServer : IAsyncDisposable
         {
             if (tls is not null)
                 await tls.DisposeAsync();
-            connection?.Dispose();
+            connection.Dispose();
         }
     }
 }
@@ -175,7 +218,8 @@ internal sealed class FakeValkeySession
             parts[i] = Encoding.UTF8.GetString(payload);
         }
 
-        _received.Add(parts);
+        lock (_received)
+            _received.Add(parts);
         return parts;
     }
 

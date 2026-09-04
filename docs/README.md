@@ -6,8 +6,8 @@ quadrants, because each serves a different need and mixing them makes all four w
 | Quadrant | Serves | When you are | Pages |
 |---|---|---|---|
 | **[Tutorials](tutorials/)** | Learning | New, and want to get something working | [Getting started](tutorials/getting-started.md) |
-| **[How-to guides](how-to/)** | A goal | Competent, and have a specific task | [Connect over TLS](how-to/connect-over-tls.md), [Pipeline commands](how-to/pipeline-commands.md), [Send any command](how-to/send-any-command.md), [Handle errors](how-to/handle-errors.md), [Run live tests](how-to/run-live-integration-tests.md) |
-| **[Reference](reference/)** | Information | Working, and need a precise fact | [ValkeyClient](reference/valkey-client.md), [Client options](reference/client-options.md), [RESP values](reference/resp-values.md), [Exceptions](reference/exceptions.md), [Valkey compatibility](reference/valkey-compatibility.md), [Performance baseline](reference/performance-baseline.md) |
+| **[How-to guides](how-to/)** | A goal | Competent, and have a specific task | [Use a cluster](how-to/use-cluster.md), [Connect over TLS](how-to/connect-over-tls.md), [Pipeline commands](how-to/pipeline-commands.md), [Send any command](how-to/send-any-command.md), [Handle errors](how-to/handle-errors.md), [Run live tests](how-to/run-live-integration-tests.md) |
+| **[Reference](reference/)** | Information | Working, and need a precise fact | [ValkeyClusterClient](reference/valkey-cluster-client.md), [ValkeyClient](reference/valkey-client.md), [Client options](reference/client-options.md), [RESP values](reference/resp-values.md), [Exceptions](reference/exceptions.md), [Valkey compatibility](reference/valkey-compatibility.md), [Performance baseline](reference/performance-baseline.md) |
 | **[Explanation](explanation/)** | Understanding | Reflecting, and want to know why | [Why managed-only](explanation/why-managed-only.md), [Connection model](explanation/connection-model.md) |
 
 ## Writing docs here

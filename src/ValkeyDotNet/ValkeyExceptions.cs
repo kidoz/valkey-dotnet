@@ -34,6 +34,16 @@ public sealed class ValkeyConnectionException : ValkeyException
         : base(message, innerException) { }
 }
 
+/// <summary>Cluster discovery, topology, or redirection failed.</summary>
+public sealed class ValkeyClusterException : ValkeyException
+{
+    public ValkeyClusterException(string message)
+        : base(message) { }
+
+    public ValkeyClusterException(string message, Exception innerException)
+        : base(message, innerException) { }
+}
+
 /// <summary>
 /// A command was rejected before it reached the wire because it would change connection state the
 /// client owns. The connection is untouched and remains usable.

@@ -13,6 +13,10 @@ Every maintained Valkey release line is exercised by the live compatibility suit
 
 Last verified 4 September 2026. Reproduce with `just valkey-up && just test-matrix`.
 
+The disposable three-primary Valkey 9.1 cluster suite also passes on 4 September 2026, including
+`CLUSTER SHARDS` discovery, endpoint mapping, routing across all three slot ranges, distributed
+pipelining, topology refresh, and cleanup. Reproduce with `just test-cluster`.
+
 ## Command coverage
 
 The client does not maintain a command allow-list. `ExecuteAsync` accepts any command name and any
@@ -68,6 +72,8 @@ var server = await valkey.ExecuteAsync(new ValkeyCommand("INFO", "server"));
 | Verbatim strings, big numbers, doubles, booleans | yes |
 | Binary-safe keys and values, including NUL, CR, and LF | yes |
 | Pipelining | yes |
+| Concurrent command multiplexing on one socket | yes; FIFO replies with one reader |
+| Cluster primary routing and slot-grouped pipelines | yes; `CLUSTER SHARDS` with `CLUSTER SLOTS` fallback |
 | TLS | yes |
 | ACL authentication (`HELLO ... AUTH`) | yes |
 | Client naming (`SETNAME`), `SELECT` | yes |
@@ -81,12 +87,12 @@ These are client-side gaps, not server-version issues, and they apply to every V
 
 | Area | State |
 |---|---|
-| Cluster routing, `MOVED`/`ASK` | absent |
 | Sentinel discovery | absent |
-| Connection pooling, multiplexing | absent |
+| General-purpose connection pooling | absent; the cluster client has bounded per-node connections |
+| Cluster replica reads and cluster-wide scans | absent |
 | Automatic reconnect and retry | absent |
-| Subscription mode (`SUBSCRIBE`, `PSUBSCRIBE`, `MONITOR`) | unusable — no idle background reader |
-| Blocking commands (`BLPOP`, `XREAD BLOCK`) | reachable, but hold the command gate for their full timeout |
+| Subscription mode (`SUBSCRIBE`, `PSUBSCRIBE`, `MONITOR`) | rejected; it needs a dedicated subscriber state machine |
+| Blocking commands (`BLPOP`, `XREAD BLOCK`) | reachable, but delay all later replies on the same connection |
 
 See [the connection model](../explanation/connection-model.md) for why.
 
@@ -97,6 +103,8 @@ just valkey-up        # start 9.x, 8.x, 7.x, and an ACL server
 just test-matrix      # run the suite against each line
 just valkey-versions  # confirm what is actually running
 just valkey-down      # tear down
+just test-cluster     # initialize and test a disposable three-primary 9.x cluster
+just cluster-down     # tear down the cluster
 ```
 
 Servers are defined in `docker-compose.yml` with in-memory persistence disabled. They are disposable

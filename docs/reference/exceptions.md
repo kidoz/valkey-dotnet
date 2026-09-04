@@ -8,6 +8,7 @@ Exception
     ├── ValkeyProtocolException
     ├── ValkeyServerException
     ├── ValkeyConnectionException
+    ├── ValkeyClusterException
     └── ValkeyUnsupportedCommandException
 ```
 
@@ -59,6 +60,11 @@ returns errors in place — call `ThrowIfError()` on each reply.
 
 The transport failed. Wraps the underlying `IOException` or `SocketException` as `InnerException`.
 Always invalidates the connection.
+
+## `ValkeyClusterException`
+
+Cluster seed discovery, topology validation, endpoint parsing, or bounded redirection failed. The
+underlying seed, server, or connection failure is retained as `InnerException` when available.
 
 ## `ValkeyUnsupportedCommandException`
 

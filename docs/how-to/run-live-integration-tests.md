@@ -47,10 +47,37 @@ Runs the suite once per line and fails if any run fails. Tests for features the 
 implement skip with a reason rather than failing — on 8.x and 7.x you will see
 `HashFieldExpirationWorksWhereTheServerSupportsIt [SKIP]`.
 
+## Run against a three-primary cluster
+
+```bash
+just test-cluster
+```
+
+This uses `docker-compose.cluster.yml` to start and initialize three Valkey 9.1 primaries on ports
+16379–16381. The nodes announce their container hostnames for node-to-node communication; the test's
+`EndpointMapper` translates those names to host-published ports. It exercises `CLUSTER SHARDS`,
+topology refresh, three slot ranges, and a pipeline distributed across the primaries.
+
+Stop and remove it separately:
+
+```bash
+just cluster-down
+```
+
+For an externally managed disposable cluster, set comma-separated seeds and optionally a host used
+to replace every announced hostname:
+
+```bash
+VALKEYDOTNET_CLUSTER_ENDPOINTS=127.0.0.1:16379,127.0.0.1:16380 \
+VALKEYDOTNET_CLUSTER_MAPPED_HOST=127.0.0.1 \
+dotnet run --project tests/ValkeyDotNet.Tests
+```
+
 ## Tear down
 
 ```bash
 just valkey-down
+just cluster-down
 ```
 
 Removes the containers and their volumes.

@@ -1,0 +1,133 @@
+# Disposable three-primary Valkey Cluster for live cluster tests.
+#
+#   just cluster-up
+#   just test-cluster
+#   just cluster-down
+
+name: valkey-dotnet-cluster-tests
+
+x-cluster-node: &cluster-node
+  image: valkey/valkey:9.1
+  restart: "no"
+  healthcheck:
+    interval: 1s
+    timeout: 2s
+    retries: 30
+    start_period: 1s
+
+services:
+  valkey-cluster-1:
+    <<: *cluster-node
+    command:
+      [
+        "valkey-server",
+        "--port",
+        "16379",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--cluster-enabled",
+        "yes",
+        "--cluster-config-file",
+        "/tmp/nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+        "--cluster-announce-hostname",
+        "valkey-cluster-1",
+        "--cluster-preferred-endpoint-type",
+        "hostname",
+      ]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "16379", "ping"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 1s
+    ports:
+      - "16379:16379"
+
+  valkey-cluster-2:
+    <<: *cluster-node
+    command:
+      [
+        "valkey-server",
+        "--port",
+        "16380",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--cluster-enabled",
+        "yes",
+        "--cluster-config-file",
+        "/tmp/nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+        "--cluster-announce-hostname",
+        "valkey-cluster-2",
+        "--cluster-preferred-endpoint-type",
+        "hostname",
+      ]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "16380", "ping"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 1s
+    ports:
+      - "16380:16380"
+
+  valkey-cluster-3:
+    <<: *cluster-node
+    command:
+      [
+        "valkey-server",
+        "--port",
+        "16381",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--cluster-enabled",
+        "yes",
+        "--cluster-config-file",
+        "/tmp/nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+        "--cluster-announce-hostname",
+        "valkey-cluster-3",
+        "--cluster-preferred-endpoint-type",
+        "hostname",
+      ]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "16381", "ping"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 1s
+    ports:
+      - "16381:16381"
+
+  cluster-init:
+    image: valkey/valkey:9.1
+    restart: "no"
+    depends_on:
+      valkey-cluster-1:
+        condition: service_healthy
+      valkey-cluster-2:
+        condition: service_healthy
+      valkey-cluster-3:
+        condition: service_healthy
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        if valkey-cli -h valkey-cluster-1 -p 16379 cluster info | grep -q 'cluster_state:ok'; then
+          exit 0
+        fi
+        valkey-cli --cluster create \
+          valkey-cluster-1:16379 \
+          valkey-cluster-2:16380 \
+          valkey-cluster-3:16381 \
+          --cluster-replicas 0 \
+          --cluster-yes

@@ -62,6 +62,42 @@ test-matrix: valkey-up
     done
     exit $status
 
+# Start a disposable three-primary cluster and initialize its slot map.
+cluster-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    compose=(docker compose -f docker-compose.cluster.yml)
+    "${compose[@]}" up -d --wait valkey-cluster-1 valkey-cluster-2 valkey-cluster-3
+    "${compose[@]}" run --rm cluster-init
+    services=(valkey-cluster-1 valkey-cluster-2 valkey-cluster-3)
+    ports=(16379 16380 16381)
+    for index in 0 1 2; do
+        ready=0
+        for _ in {1..40}; do
+            if "${compose[@]}" exec -T "${services[$index]}" \
+                valkey-cli -p "${ports[$index]}" cluster info 2>/dev/null \
+                | tr -d '\r' | grep -q '^cluster_state:ok$'; then
+                ready=1
+                break
+            fi
+            sleep 0.25
+        done
+        if [ "$ready" -ne 1 ]; then
+            echo "${services[$index]} did not reach cluster_state:ok" >&2
+            exit 1
+        fi
+    done
+
+# Run the live cluster suite. Announced container hostnames are mapped to host-published ports.
+test-cluster: cluster-up
+    VALKEYDOTNET_CLUSTER_ENDPOINTS=127.0.0.1:16379,127.0.0.1:16380,127.0.0.1:16381 \
+    VALKEYDOTNET_CLUSTER_MAPPED_HOST=127.0.0.1 \
+    dotnet run --project {{ tests }}
+
+# Stop the disposable cluster and remove its containers and networks.
+cluster-down:
+    docker compose -f docker-compose.cluster.yml down -v
+
 # Run the BenchmarkDotNet suite. Release only; results feed BENCHMARKS.md.
 bench *args:
     dotnet run -c Release --project {{ benchmarks }} -- {{ args }}

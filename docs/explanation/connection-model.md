@@ -7,10 +7,10 @@ failure, and what that rules out. It is background, not instruction — for the 
 ## One client is one socket
 
 A `ValkeyClient` owns exactly one TCP (or TLS) connection to one node and multiplexes ordinary
-commands on that stream. Every connection has exactly one response reader. There is no pool and no
-discovery: pooling, cluster routing, and reconnect are each substantial subsystems with their own
-failure modes, and building them on an unproven transport produces bugs that are very hard to
-attribute.
+commands on that stream. `ValkeyClusterClient` composes these single-node clients: it retains a
+bounded, configurable number of connections per primary and routes keys through an atomically
+replaceable slot map. Every connection has exactly one response reader and the same ordering and
+cancellation rules described below.
 
 ## Why replies must stay in order
 
@@ -32,7 +32,7 @@ reordered.
 
 RESP ordering still creates head-of-line blocking: a slow command delays delivery of every reply
 behind it, even when the server has finished later work. Blocking commands therefore need their own
-client instance.
+client instance or a separate connection from a cluster node's bounded connection set.
 
 ## Why cancellation destroys the connection
 
@@ -76,8 +76,8 @@ hoping would not be.
 ## Why pipeline errors are returned, not thrown
 
 `ExecutePipelineAsync` writes *n* contiguous commands and queues *n* reply slots. Throwing on the
-first error reply would prevent the caller from observing the remaining results, even though the
-shared response reader must continue draining them.
+first error reply would prevent the caller from observing the remaining results and make redirect
+handling incomplete, even though the shared response reader must continue draining them.
 
 Returning errors in place is what lets the client finish draining. The cost is that the caller must
 check each reply; the benefit is that a failed command in a batch does not cost you the connection.
@@ -113,9 +113,10 @@ knobs; raising them by default weakens the process against a hostile peer.
 
 ## What this design defers
 
-Cluster routing, Sentinel discovery, pooling, automatic reconnect, and subscription-mode Pub/Sub are
-absent. Each needs a decision this library has not yet made — which commands are safe to retry after
-which failures, how subscription state is restored across a reconnect, how backpressure is signalled.
+Replica reads, cluster-wide scans, Sentinel discovery, general-purpose pooling, automatic reconnect,
+and subscription-mode Pub/Sub are absent. Each needs a decision this library has not yet
+made — which commands are safe to retry after which failures, how subscription state is restored
+across a reconnect, how backpressure is signalled.
 Guessing at those would bake wrong answers into the transport.
 
 The generic command API means none of that blocks day-to-day use. Scripting via `EVAL` covers the

@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/kidoz/valkey-dotnet/blob/main/LICENSE)
 
 **ValkeyDotNet** — a .NET client library for [Valkey](https://valkey.io/), written entirely in C#
-with RESP2, RESP3, TLS, and pipelining.
+with RESP2, RESP3, TLS, pipelining, and cluster routing.
 
 > ValkeyDotNet is an independent open-source project. It is not an official Valkey project and does
 > not imply Valkey endorsement.
@@ -18,8 +18,9 @@ with RESP2, RESP3, TLS, and pipelining.
 
 ## Status
 
-ValkeyDotNet 0.1.0 is an implementation-quality MVP for a **single Valkey node**. Supported features
-are implemented and tested; unsupported behavior fails explicitly.
+ValkeyDotNet 0.1.0 is an implementation-quality client for standalone Valkey and primary-routed
+Valkey Cluster workloads. Supported features are implemented and tested; unsupported behavior fails
+explicitly.
 
 ValkeyDotNet implements **its own** managed RESP protocol. The shipping library has **zero** runtime
 package dependencies — no Rust core, no native library, no code generation, no third-party NuGet
@@ -34,10 +35,12 @@ Implemented:
   command pipelining
 - Convenience methods for common string, counter, and hash operations
 - Concurrent callers multiplexed on one connection with FIFO reply matching
+- `CLUSTER SHARDS` discovery with `CLUSTER SLOTS` fallback, CRC16/hash-tag routing, endpoint mapping,
+  bounded `MOVED`/`ASK` handling, and slot-grouped cluster pipelines
+- Configurable bounded connections per cluster node for head-of-line isolation
 
-Deliberately not implemented: cluster routing, Sentinel discovery, connection pooling, automatic
-reconnect/retry, and subscription-mode Pub/Sub — the commands that would need them are rejected with
-a named exception rather than left to desynchronize the connection. See
+Deliberately not implemented: replica reads, cluster-wide scans, Sentinel discovery, general-purpose
+pooling, automatic reconnect/retry, and subscription-mode Pub/Sub. See
 [the connection model](docs/explanation/connection-model.md) for why, and
 [why managed-only](docs/explanation/why-managed-only.md) for the positioning.
 
@@ -60,11 +63,13 @@ Documentation follows [Diátaxis](https://diataxis.fr/). Start at [`docs/`](docs
 
 - Tutorial: [Getting started](docs/tutorials/getting-started.md)
 - How-to: [Connect over TLS](docs/how-to/connect-over-tls.md) ·
+  [Use a cluster](docs/how-to/use-cluster.md) ·
   [Pipeline commands](docs/how-to/pipeline-commands.md) ·
   [Send any command](docs/how-to/send-any-command.md) ·
   [Handle errors](docs/how-to/handle-errors.md) ·
   [Run live integration tests](docs/how-to/run-live-integration-tests.md)
 - Reference: [`ValkeyClient`](docs/reference/valkey-client.md) ·
+  [`ValkeyClusterClient`](docs/reference/valkey-cluster-client.md) ·
   [Client options](docs/reference/client-options.md) ·
   [RESP values](docs/reference/resp-values.md) ·
   [Exceptions](docs/reference/exceptions.md) ·
@@ -104,6 +109,25 @@ foreach (var pair in raw.AsMap())
 
 The generic command API is intentional: new server commands work immediately, while typed helpers can
 grow without changing the transport or parser.
+
+### Cluster routing
+
+```csharp
+await using var cluster = await ValkeyClusterClient.ConnectAsync(
+    new ValkeyClusterOptions
+    {
+        SeedNodes =
+        [
+            new ValkeyClientOptions { Host = "valkey-a.example.com", Port = 6379, UseTls = true },
+            new ValkeyClientOptions { Host = "valkey-b.example.com", Port = 6379, UseTls = true },
+        ],
+    }
+);
+
+await cluster.SetStringAsync("{user:42}:status", "online");
+```
+
+See [Use a Valkey Cluster](docs/how-to/use-cluster.md) for generic commands and hash tags.
 
 ### Pipelining
 
@@ -175,7 +199,9 @@ provides one container per maintained Valkey line:
 just valkey-up            # start 9.x, 8.x, 7.x, and an ACL server
 just test-live            # defaults to 127.0.0.1:6379
 just test-matrix          # run the suite against every line
+just test-cluster         # initialize and test a three-primary cluster
 just valkey-down
+just cluster-down
 ```
 
 Run the BenchmarkDotNet performance and allocation suite in Release:
