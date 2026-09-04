@@ -1,5 +1,14 @@
 namespace ValkeyDotNet;
 
+/// <summary>The connection owner rejected an operation before sending it because admission is full.</summary>
+public sealed class ValkeyCapacityException : ValkeyException, IValkeyCommandFailure
+{
+    internal ValkeyCapacityException()
+        : base("The Valkey connection owner's operation capacity is full.") { }
+
+    public ValkeyCommandDeliveryStatus DeliveryStatus => ValkeyCommandDeliveryStatus.NotSent;
+}
+
 public class ValkeyException : Exception
 {
     public ValkeyException(string message)

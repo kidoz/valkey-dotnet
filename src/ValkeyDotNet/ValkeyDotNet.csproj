@@ -23,7 +23,8 @@
         CA1008  ValkeyProtocol values mirror the wire numbers (Resp2 = 2, Resp3 = 3). A zero
                 'None' member would be meaningless and would break that mapping.
         CA1031  ReadNonPushAsync deliberately swallows user push-callback exceptions so a caller
-                bug cannot desynchronize the wire.
+                bug cannot desynchronize the wire. Connection-owner background attempts settle
+                shared tasks and observe abandoned failures instead of leaking unobserved tasks.
         CA1032  Exception constructors are intentionally constrained: ValkeyServerException derives
                 ErrorCode from the message, and ValkeyConnectionException always wraps an inner cause.
         CA1065  ValkeyArgument implicit conversions throw on null instead of silently encoding an
@@ -33,13 +34,14 @@
         CA2000  ConnectAsync transfers ownership of the client to the caller and disposes it on
                 every failure path.
         CA2213  The coordination primitives — _writeGate, _pendingCapacity, and _readerShutdown on
-                ValkeyClient, and _clientGate on ValkeyClusterClient — are deliberately not
+                ValkeyClient, _clientGate on ValkeyClusterClient, and _shutdown on
+                ValkeyConnectionOwner — are deliberately not
                 disposed. Invalidation runs while other callers may still be waiting on those
                 gates and while the response loop still observes _readerShutdown.Token; disposing
                 them would throw ObjectDisposedException over the terminal failure each pending
-                caller is meant to observe. Neither type holds an unmanaged resource here:
+                caller is meant to observe. These types hold no unmanaged resource here:
                 SemaphoreSlim allocates one only if AvailableWaitHandle is read, which these types
-                never do, and _readerShutdown never schedules a cancellation timer.
+                never do, and these shutdown sources never schedule a cancellation timer.
         CA2225  Named alternates (FromString, FromInt32, ...) would enlarge the public surface;
                 the implicit conversions are the intended ergonomics.
         CA5350  ValkeyScript uses SHA1 solely for the EVALSHA identifier mandated by Valkey's

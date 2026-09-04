@@ -4,6 +4,12 @@
 
 ### Added
 
+- Standalone connection ownership with shared bounded connection attempts, capped exponential
+  backoff and jitter, fail-fast admission, lifecycle health, and explicit per-operation retry opt-in.
+- Owner command, pipeline, and script deadlines cover connection acquisition and execution while
+  preserving delivery ambiguity across authorized retries; ordinary writes are never replayed.
+- Deterministic recovery/cancellation/admission coverage and live repeated connection-loss recovery
+  with restored RESP2/RESP3, database, client-name, and script-cache state.
 - Binary-safe structured Lua scripts with separate keys and arguments, cached `EVALSHA` execution,
   coordinated `NOSCRIPT` recovery, isolated deadlines, and source-bearing pipeline commands.
 - Cluster script routing with cross-slot validation and fresh `ASKING` for every recovery attempt.

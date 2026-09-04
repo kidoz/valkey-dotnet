@@ -14,6 +14,7 @@ Exception
     ├── ValkeyProtocolException
     ├── ValkeyServerException
     ├── ValkeyConnectionException
+    ├── ValkeyCapacityException
     ├── ValkeyClusterException
     └── ValkeyUnsupportedCommandException
 ```
@@ -77,8 +78,14 @@ returns errors in place — call `ThrowIfError()` on each reply.
 ## `ValkeyConnectionException`
 
 The transport failed. Wraps the underlying `IOException` or `SocketException` as `InnerException`.
-Always invalidates the connection. Command-path instances conservatively report
-`MayHaveBeenSent`.
+The affected physical connection is terminal. Command-path instances conservatively report
+`MayHaveBeenSent`; owner acquisition exhaustion and a connection lost before admission report
+`NotSent` unless an earlier retry attempt was ambiguous.
+
+## `ValkeyCapacityException`
+
+The standalone owner's `MaxConcurrentOperations` bound is full. The operation is rejected
+immediately with `NotSent`; existing operations and the physical connection are untouched.
 
 ## `ValkeyCommandCanceledException`
 

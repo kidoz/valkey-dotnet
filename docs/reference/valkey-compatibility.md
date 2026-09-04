@@ -90,11 +90,14 @@ These are client-side gaps, not server-version issues, and they apply to every V
 | Sentinel discovery | absent |
 | General-purpose connection pooling | absent; the cluster client has bounded per-node connections |
 | Cluster replica reads and cluster-wide scans | absent |
-| Automatic reconnect and retry | absent |
 | Subscription mode (`SUBSCRIBE`, `PSUBSCRIBE`, `MONITOR`) | rejected; it needs a dedicated subscriber state machine |
 | Blocking commands (`BLPOP`, `XREAD BLOCK`) | reachable, but delay all later replies on the same connection |
 
 See [the connection model](../explanation/connection-model.md) for why.
+
+The unreleased `ValkeyConnectionOwner` provides standalone connection replacement with bounded
+acquisition and explicit retry opt-in. The physical `ValkeyClient` remains terminal after failure.
+See the [owner reference](connection-owner.md).
 
 ## Running the compatibility suite
 

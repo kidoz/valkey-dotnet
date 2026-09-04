@@ -50,12 +50,16 @@ internal sealed class FakeValkeyServer : IAsyncDisposable
         return new FakeValkeyServer(listener, certificate, 1, (_, session) => handler(session));
     }
 
-    public static FakeValkeyServer StartMany(int sessionCount, Func<int, FakeValkeySession, Task> handler)
+    public static FakeValkeyServer StartMany(
+        int sessionCount,
+        Func<int, FakeValkeySession, Task> handler,
+        X509Certificate2? certificate = null
+    )
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(sessionCount, 1);
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        return new FakeValkeyServer(listener, certificate: null, sessionCount, handler);
+        return new FakeValkeyServer(listener, certificate, sessionCount, handler);
     }
 
     public ValkeyClientOptions ClientOptions() =>

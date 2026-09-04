@@ -43,9 +43,13 @@ catch (ValkeyConnectionException)
 }
 ```
 
-There is no automatic reconnect. After `ValkeyConnectionException`, `ValkeyProtocolException`, or a
+The physical `ValkeyClient` does not reconnect itself. After `ValkeyConnectionException`, `ValkeyProtocolException`, or a
 cancelled operation, the client is permanently invalidated — every subsequent call throws
 `ObjectDisposedException`. Build a new one.
+
+For managed replacement in the development version, use the
+[standalone connection owner](recover-standalone-connections.md). Its ordinary methods do not replay
+failed commands; explicitly retryable methods require operation-specific authorization.
 
 **Only retry commands that are safe to repeat.** A `GET` is idempotent. An `INCR` is not: the first
 attempt may have applied before the connection broke, so a blind retry can double-count.

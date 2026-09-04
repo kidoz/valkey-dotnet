@@ -13,6 +13,9 @@ quadrants, because each serves a different need and mixing them makes all four w
 Script execution: [Execute reusable scripts](how-to/execute-scripts.md) and
 [script API reference](reference/scripts.md).
 
+Standalone recovery: [Recover a standalone connection](how-to/recover-standalone-connections.md)
+and [connection owner reference](reference/connection-owner.md).
+
 ## Writing docs here
 
 Pick the quadrant before you write, and keep the page inside it:

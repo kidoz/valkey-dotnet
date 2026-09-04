@@ -4,6 +4,72 @@ namespace ValkeyDotNet.IntegrationTests;
 
 public sealed class ValkeyClientIntegrationTests
 {
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
+    public async Task ConnectionOwnerRecoversFromLiveConnectionLossAndRestoresConfiguredState(ValkeyProtocol protocol)
+    {
+        var endpoint = GetEndpoint();
+        var token = TestContext.Current.CancellationToken;
+        var connection = new ValkeyClientOptions
+        {
+            Host = endpoint.Host,
+            Port = endpoint.Port,
+            Protocol = protocol,
+            ClientName = "valkey-owner-recovery",
+            Database = 2,
+        };
+        await using var owner = new ValkeyConnectionOwner(new ValkeyConnectionOwnerOptions { Connection = connection });
+        await using var control = await ValkeyClient.ConnectAsync(connection, token);
+        var script = new ValkeyScript("return ARGV[1]");
+        var previousId = (await owner.ExecuteAsync(new ValkeyCommand("CLIENT", "ID"), token)).AsInt64();
+        for (var cycle = 0; cycle < 3; cycle++)
+        {
+            Assert.Equal("value", (await owner.ExecuteScriptAsync(script, [], ["value"], token)).AsString());
+            Assert.Equal(
+                1,
+                (await control.ExecuteAsync(new ValkeyCommand("CLIENT", "KILL", "ID", previousId), token)).AsInt64()
+            );
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(10));
+            while (owner.State == ValkeyConnectionState.Connected)
+                await Task.Delay(10, deadline.Token);
+            Assert.Equal(ValkeyConnectionState.Disconnected, owner.State);
+            await control.ExecuteAsync(new ValkeyCommand("SCRIPT", "FLUSH"), token);
+            var results = await owner.ExecutePipelineWithDeadlineAsync(
+                [
+                    new ValkeyCommand("CLIENT", "ID"),
+                    new ValkeyCommand("CLIENT", "GETNAME"),
+                    new ValkeyCommand("CLIENT", "INFO"),
+                ],
+                TimeSpan.FromSeconds(10),
+                token
+            );
+            var currentId = results[0].AsInt64();
+            Assert.NotEqual(previousId, currentId);
+            Assert.Equal("valkey-owner-recovery", results[1].AsString());
+            Assert.Contains("db=2", results[2].AsString(), StringComparison.Ordinal);
+            Assert.Contains(
+                protocol == ValkeyProtocol.Resp2 ? "resp=2" : "resp=3",
+                results[2].AsString(),
+                StringComparison.Ordinal
+            );
+            Assert.Equal(
+                "reloaded",
+                (
+                    await owner.ExecuteScriptWithDeadlineAsync(
+                        script,
+                        [],
+                        ["reloaded"],
+                        TimeSpan.FromSeconds(10),
+                        token
+                    )
+                ).AsString()
+            );
+            previousId = currentId;
+        }
+    }
+
     private static (string Host, int Port) GetEndpoint()
     {
         var endpoint = Environment.GetEnvironmentVariable("VALKEYDOTNET_ENDPOINT");

@@ -59,6 +59,18 @@ socket and settles every retained slot as a connection failure. It never skips t
 reassigns a later reply. A cluster client replaces that terminal node connection for a subsequent
 command without replaying the ambiguous command.
 
+## Why recovery has a separate owner
+
+`ValkeyConnectionOwner` provides a long-lived standalone lifecycle without making a broken physical
+stream reusable. Concurrent callers share one bounded connection cycle. A failed write is not
+automatically repeated just because a replacement socket is available: the original server may
+already have applied it. Replay therefore requires an explicitly retryable operation at the call
+site, where the application can judge its safety.
+
+Admission limits cap owner work even while offline, and jittered backoff bounds reconnection
+pressure. A waiter's cancellation ends that wait without destroying a shared attempt needed by
+other callers. See the [owner reference](../reference/connection-owner.md) for exact semantics.
+
 ## Why some commands are refused outright
 
 A few commands do not answer a question; they change what the connection *is*. `SUBSCRIBE` moves it
@@ -120,9 +132,9 @@ knobs; raising them by default weakens the process against a hostile peer.
 
 ## What this design defers
 
-Replica reads, cluster-wide scans, Sentinel discovery, general-purpose pooling, automatic reconnect,
+Replica reads, cluster-wide scans, Sentinel discovery, general-purpose pooling,
 and subscription-mode Pub/Sub are absent. Each needs a decision this library has not yet
-made — which commands are safe to retry after which failures, how subscription state is restored
+made — how connections are allocated to workloads, how subscription state is restored
 across a reconnect, how backpressure is signalled.
 Guessing at those would bake wrong answers into the transport.
 
