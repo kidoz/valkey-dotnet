@@ -6,10 +6,10 @@ namespace ValkeyDotNet;
 public sealed class ValkeyClientOptions
 {
     /// <summary>
-    /// The ceiling <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/> accepts. A longer
-    /// timeout would throw from the connect path instead of being validated up front.
+    /// The ceiling timer-backed timeout APIs accept. A longer timeout would throw after connection
+    /// resources exist instead of being validated up front.
     /// </summary>
-    private const long MaxConnectTimeoutMilliseconds = uint.MaxValue - 1;
+    private const long MaxTimerTimeoutMilliseconds = uint.MaxValue - 1;
 
     public string Host { get; init; } = "localhost";
     public int Port { get; init; } = 6379;
@@ -21,6 +21,13 @@ public sealed class ValkeyClientOptions
     public bool UseTls { get; init; }
     public RemoteCertificateValidationCallback? CertificateValidationCallback { get; init; }
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Maximum time allowed to drain replies retained after an isolated operation deadline. If the
+    /// replies do not arrive, the connection is terminated so its bounded pending queue cannot stay
+    /// occupied indefinitely.
+    /// </summary>
+    public TimeSpan ResponseDrainTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Maximum number of commands written to this connection whose replies have not yet been read.
@@ -48,8 +55,13 @@ public sealed class ValkeyClientOptions
             throw new ArgumentOutOfRangeException(nameof(Database));
         if (!Enum.IsDefined(Protocol))
             throw new ArgumentOutOfRangeException(nameof(Protocol));
-        if (ConnectTimeout <= TimeSpan.Zero || ConnectTimeout.TotalMilliseconds > MaxConnectTimeoutMilliseconds)
+        if (ConnectTimeout <= TimeSpan.Zero || ConnectTimeout.TotalMilliseconds > MaxTimerTimeoutMilliseconds)
             throw new ArgumentOutOfRangeException(nameof(ConnectTimeout));
+        if (
+            ResponseDrainTimeout <= TimeSpan.Zero
+            || ResponseDrainTimeout.TotalMilliseconds > MaxTimerTimeoutMilliseconds
+        )
+            throw new ArgumentOutOfRangeException(nameof(ResponseDrainTimeout));
         if (MaxPendingRequests is < 1 or > 1024 * 1024)
             throw new ArgumentOutOfRangeException(nameof(MaxPendingRequests));
         if (MaxResponseBytes < 1024)

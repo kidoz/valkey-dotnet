@@ -138,7 +138,8 @@ public sealed class ValkeyClient : IAsyncDisposable
 
     /// <summary>
     /// Executes any Valkey command with an isolated deadline. Once the command is enqueued, expiry
-    /// stops waiting for its reply but leaves the connection reader to drain that reply.
+    /// stops waiting for its reply but leaves the connection reader to drain that reply. The
+    /// connection terminates if draining exceeds <see cref="ValkeyClientOptions.ResponseDrainTimeout"/>.
     /// </summary>
     public async Task<RespValue> ExecuteWithDeadlineAsync(
         ValkeyCommand command,
@@ -173,7 +174,8 @@ public sealed class ValkeyClient : IAsyncDisposable
 
     /// <summary>
     /// Executes a contiguous command batch with an isolated deadline. Expiry never abandons unread
-    /// positional replies; the background reader drains the entire batch before later replies.
+    /// positional replies; the background reader drains the entire batch before later replies, or
+    /// terminates the connection after <see cref="ValkeyClientOptions.ResponseDrainTimeout"/>.
     /// </summary>
     public async Task<IReadOnlyList<RespValue>> ExecutePipelineWithDeadlineAsync(
         IEnumerable<ValkeyCommand> commands,
@@ -710,12 +712,12 @@ public sealed class ValkeyClient : IAsyncDisposable
         return timeout;
     }
 
-    private static async Task<T> AwaitWithDeadlineAsync<T>(Task<T> response, TimeSpan timeout, long startedAt)
+    private async Task<T> AwaitWithDeadlineAsync<T>(Task<T> response, TimeSpan timeout, long startedAt)
     {
         var remaining = timeout - Stopwatch.GetElapsedTime(startedAt);
         if (remaining <= TimeSpan.Zero)
         {
-            _ = ObserveDetachedAsync(response);
+            _ = DrainTimedOutResponseAsync(response);
             throw new ValkeyCommandTimeoutException(timeout, ValkeyCommandDeliveryStatus.MayHaveBeenSent);
         }
 
@@ -725,21 +727,50 @@ public sealed class ValkeyClient : IAsyncDisposable
         }
         catch (TimeoutException)
         {
-            _ = ObserveDetachedAsync(response);
+            _ = DrainTimedOutResponseAsync(response);
             throw new ValkeyCommandTimeoutException(timeout, ValkeyCommandDeliveryStatus.MayHaveBeenSent);
         }
     }
 
-    private static async Task ObserveDetachedAsync(Task response)
+    private async Task DrainTimedOutResponseAsync(Task response)
     {
+        try
+        {
+            await response.WaitAsync(_options.ResponseDrainTimeout, _readerShutdown.Token).ConfigureAwait(false);
+            return;
+        }
+        catch (TimeoutException)
+        {
+            if (!response.IsCompleted)
+            {
+                InvalidateConnection(
+                    new ValkeyConnectionException(
+                        "The Valkey connection was terminated because a timed-out command reply did not arrive.",
+                        new TimeoutException(
+                            $"The retained response did not drain within {_options.ResponseDrainTimeout}."
+                        )
+                    )
+                );
+            }
+        }
+        catch (OperationCanceledException) when (_readerShutdown.IsCancellationRequested)
+        {
+            // Connection termination settles the retained response below.
+        }
+        catch
+        {
+            // The retained response reached another terminal state and its failure is now observed.
+            return;
+        }
+
         try
         {
             await response.ConfigureAwait(false);
         }
         catch
         {
-            // The caller already observed its deadline. This continuation observes only the eventual
-            // terminal result while the response loop drains the positional reply.
+            // The caller already observed its deadline. This continuation observes the eventual
+            // terminal failure after connection invalidation settles the retained FIFO entry.
         }
     }
 

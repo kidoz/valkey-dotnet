@@ -18,6 +18,7 @@ is created.
 | `UseTls` | `bool` | `false` | Wraps the socket in an `SslStream`. |
 | `CertificateValidationCallback` | `RemoteCertificateValidationCallback?` | `null` | Replaces platform certificate validation entirely when set. |
 | `ConnectTimeout` | `TimeSpan` | 5 seconds | Bounds connect, TLS handshake, and the initial `HELLO`. Must be > 0 and ≤ 4294967294 ms (~49.7 days), the longest delay a timer can schedule. |
+| `ResponseDrainTimeout` | `TimeSpan` | 30 seconds | Maximum time to drain replies retained after an isolated operation deadline. Must be > 0 and ≤ 4294967294 ms (~49.7 days). |
 | `MaxPendingRequests` | `int` | `1024` | Maximum commands written on this connection whose replies have not yet been read. Must be 1–1048576. |
 | `MaxResponseBytes` | `int` | 67108864 (64 MiB) | Maximum bytes in a single reply frame. Must be ≥ 1024. |
 | `MaxResponseElements` | `int` | 1048576 (1 Mi) | Maximum number of RESP values decoded from a single reply. Must be ≥ 16. |
@@ -34,6 +35,7 @@ is created.
 | `Database` negative | `ArgumentOutOfRangeException` |
 | `Protocol` not a defined `ValkeyProtocol` value | `ArgumentOutOfRangeException` |
 | `ConnectTimeout` ≤ `TimeSpan.Zero`, or longer than a timer can schedule | `ArgumentOutOfRangeException` |
+| `ResponseDrainTimeout` ≤ `TimeSpan.Zero`, or longer than a timer can schedule | `ArgumentOutOfRangeException` |
 | `MaxPendingRequests` outside 1–1048576 | `ArgumentOutOfRangeException` |
 | `MaxResponseBytes` < 1024 | `ArgumentOutOfRangeException` |
 | `MaxResponseElements` < 16 | `ArgumentOutOfRangeException` |
@@ -50,6 +52,12 @@ Passing `null` options to `ConnectAsync` uses a default-constructed instance.
 `MaxPendingRequests` bounds multiplexer bookkeeping and applies to each command inside a pipeline.
 Callers wait asynchronously when the connection reaches the limit; cancellation while waiting does
 not invalidate the connection. A pipeline larger than the limit is rejected before it writes.
+
+`ResponseDrainTimeout` is separate from the caller's operation deadline. The operation deadline
+stops that caller from waiting while its FIFO entry remains available to receive the positional
+reply. If all replies retained for that operation have not drained within `ResponseDrainTimeout`,
+the socket is terminated and every remaining caller is faulted with `ValkeyConnectionException`.
+This prevents a server that never replies from occupying bounded queue capacity indefinitely.
 
 `MaxResponseBytes`, `MaxResponseElements`, and `MaxNestingDepth` are enforced by the reader on every
 frame. Exceeding any of them throws `ValkeyProtocolException` and invalidates the connection. They

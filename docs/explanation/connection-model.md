@@ -52,6 +52,13 @@ stream position is untrustworthy, the only safe move is to stop using it.
 A `ValkeyServerException` is different. An error reply is a complete, correctly framed value that the
 client fully consumed. The stream position is still known, so the connection survives.
 
+An isolated operation deadline does not cancel the read or remove its FIFO slot. The reader may
+still receive the late positional reply and keep the connection synchronized. That cannot continue
+forever when the server never replies: after `ResponseDrainTimeout`, the client retires the whole
+socket and settles every retained slot as a connection failure. It never skips the missing slot or
+reassigns a later reply. A cluster client replaces that terminal node connection for a subsequent
+command without replaying the ambiguous command.
+
 ## Why some commands are refused outright
 
 A few commands do not answer a question; they change what the connection *is*. `SUBSCRIBE` moves it

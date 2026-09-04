@@ -8,6 +8,8 @@
   failures.
 - Isolated per-operation deadline methods for standalone and cluster generic commands and pipelines;
   late replies remain in the bounded FIFO and are drained without invalidating healthy connections.
+- Configurable response-drain timeout terminates a connection when a reply retained after an
+  isolated deadline never arrives, settling all pending work without reassigning FIFO reply slots.
 
 ## [1.0.0] - 2026-09-04
 

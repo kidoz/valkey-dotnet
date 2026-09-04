@@ -72,7 +72,9 @@ the connection remain usable. Do not blindly retry a mutation when `DeliveryStat
 Caller cancellation is intentionally stronger. Cancelling before enqueue sends nothing. Cancelling
 after enqueue throws `ValkeyCommandCanceledException`, reports `MayHaveBeenSent`, and invalidates the
 connection because the stream may sit between protocol frames. Prefer the explicit deadline method
-for an isolated deadline and a server-side bound where one exists.
+for an isolated deadline and a server-side bound where one exists. Set `ResponseDrainTimeout` on
+`ValkeyClientOptions` to limit how long an absent late reply may retain FIFO capacity; expiry of that
+drain timeout terminates the stalled connection and faults its remaining callers.
 
 ## Check pipeline replies
 

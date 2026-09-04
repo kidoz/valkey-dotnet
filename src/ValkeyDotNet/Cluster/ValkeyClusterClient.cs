@@ -28,6 +28,13 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
             _next = (_next + 1) % Clients.Count;
             return selected;
         }
+
+        public int RemoveDisposed()
+        {
+            var removed = Clients.RemoveAll(static client => client.IsDisposed);
+            _next = Clients.Count == 0 ? 0 : _next % Clients.Count;
+            return removed;
+        }
     }
 
     private readonly record struct ClusterEndpoint(string Host, int Port)
@@ -520,6 +527,8 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
                 _pools.Add(endpoint, pool);
             }
 
+            _connectionCount -= pool.RemoveDisposed();
+
             var missing = _options.ConnectionsPerNode - pool.Clients.Count;
             if (missing > _options.MaxNodeConnections - _connectionCount)
                 throw new ValkeyClusterException(
@@ -767,6 +776,7 @@ public sealed class ValkeyClusterClient : IAsyncDisposable
             UseTls = _nodeTemplate.UseTls,
             CertificateValidationCallback = _nodeTemplate.CertificateValidationCallback,
             ConnectTimeout = _nodeTemplate.ConnectTimeout,
+            ResponseDrainTimeout = _nodeTemplate.ResponseDrainTimeout,
             MaxPendingRequests = _nodeTemplate.MaxPendingRequests,
             MaxResponseBytes = _nodeTemplate.MaxResponseBytes,
             MaxResponseElements = _nodeTemplate.MaxResponseElements,

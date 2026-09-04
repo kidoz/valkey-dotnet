@@ -58,7 +58,8 @@ connection state the client owns.
 `ExecuteWithDeadlineAsync` sets a deadline for this operation without cancelling socket I/O. If the
 deadline expires before the command enters the pending queue, `ValkeyCommandTimeoutException` reports
 `NotSent`. After enqueue it reports `MayHaveBeenSent`; the caller stops waiting, but the background
-reader drains the late reply so unrelated commands and the connection remain usable. A positive
+reader drains the late reply so unrelated commands and the connection remain usable. If it cannot
+drain within `ResponseDrainTimeout`, the entire stalled connection is terminated safely. A positive
 timeout no longer than approximately 49.7 days is required.
 
 ```csharp
@@ -136,4 +137,8 @@ socket I/O or removes the pending FIFO entry, so it does not invalidate the conn
 is measured from admission, but an in-progress socket write is allowed to reach its next safe
 completion point before the timeout is observed; interrupting a partially written RESP frame would
 make the shared connection unsafe. Timed-out entries remain bounded by `MaxPendingRequests` until
-their replies arrive or the connection terminates.
+their replies arrive. If they do not drain within `ResponseDrainTimeout`, the client terminates the
+connection and faults every remaining FIFO entry with `ValkeyConnectionException`; no reply slot is
+removed or reassigned. Connect a new standalone client after this terminal failure. Cluster clients
+discard and replace the unusable node connection for the next command; the timed-out command itself
+is never replayed.

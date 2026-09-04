@@ -44,6 +44,30 @@ public sealed class ValkeyClientOptionsTests
 
     [Theory]
     [InlineData(0)]
+    [InlineData(-1)]
+    public void RejectsANonPositiveResponseDrainTimeout(int milliseconds)
+    {
+        var options = new ValkeyClientOptions { ResponseDrainTimeout = TimeSpan.FromMilliseconds(milliseconds) };
+
+        Assert.Throws<ArgumentOutOfRangeException>(options.Validate);
+    }
+
+    [Fact]
+    public void RejectsAResponseDrainTimeoutTheTimerCannotSchedule()
+    {
+        var options = new ValkeyClientOptions { ResponseDrainTimeout = TimeSpan.MaxValue };
+
+        Assert.Throws<ArgumentOutOfRangeException>(options.Validate);
+    }
+
+    [Fact]
+    public void AcceptsTheLargestSchedulableResponseDrainTimeout()
+    {
+        new ValkeyClientOptions { ResponseDrainTimeout = TimeSpan.FromMilliseconds(uint.MaxValue - 1) }.Validate();
+    }
+
+    [Theory]
+    [InlineData(0)]
     [InlineData(65536)]
     public void RejectsAPortOutsideTheValidRange(int port)
     {

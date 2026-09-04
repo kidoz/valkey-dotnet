@@ -597,6 +597,58 @@ public sealed class ValkeyClientTests
     }
 
     [Fact]
+    public async Task ResponseDrainTimeoutTerminatesAStalledConnectionAndSettlesEveryPendingCaller()
+    {
+        var commandsWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseServer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.ReadCommandAsync();
+            commandsWritten.SetResult();
+            await releaseServer.Task;
+        });
+        var serverOptions = server.ClientOptions();
+        await using var client = await ValkeyClient.ConnectAsync(
+            new ValkeyClientOptions
+            {
+                Host = serverOptions.Host,
+                Port = serverOptions.Port,
+                ConnectTimeout = serverOptions.ConnectTimeout,
+                ResponseDrainTimeout = TimeSpan.FromMilliseconds(500),
+            },
+            TestContext.Current.CancellationToken
+        );
+
+        var timedOut = client.ExecuteWithDeadlineAsync(
+            new ValkeyCommand("GET", "stalled"),
+            TimeSpan.FromMilliseconds(500),
+            TestContext.Current.CancellationToken
+        );
+        var collateral = client.PingAsync(TestContext.Current.CancellationToken);
+        await commandsWritten.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        try
+        {
+            var deadlineFailure = await Assert.ThrowsAsync<ValkeyCommandTimeoutException>(async () => await timedOut);
+            Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, deadlineFailure.DeliveryStatus);
+            var connectionFailure = await Assert.ThrowsAsync<ValkeyConnectionException>(async () =>
+                await collateral.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken)
+            );
+            Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, connectionFailure.DeliveryStatus);
+            Assert.IsType<TimeoutException>(connectionFailure.InnerException);
+            await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+                await client.PingAsync(TestContext.Current.CancellationToken)
+            );
+        }
+        finally
+        {
+            releaseServer.TrySetResult();
+        }
+    }
+
+    [Fact]
     public async Task DeadlineWhilePendingCapacityIsFullReportsThatTheCommandWasNotSent()
     {
         var firstWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

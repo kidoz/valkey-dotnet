@@ -29,7 +29,7 @@ Idempotent. Closes every node connection opened by the cluster client.
 
 | Member | Default | Meaning |
 |---|---|---|
-| `SeedNodes` | one default `ValkeyClientOptions` | Nodes tried during discovery. The successful seed's TLS, authentication, protocol, database, timeout, pending-request limit, and parser settings are copied to discovered node connections. |
+| `SeedNodes` | one default `ValkeyClientOptions` | Nodes tried during discovery. The successful seed's TLS, authentication, protocol, database, connect and response-drain timeouts, pending-request limit, and parser settings are copied to discovered node connections. |
 | `MaxRedirects` | `5` | Maximum `MOVED` or `ASK` redirects followed for one command. Valid range: 0–16. |
 | `MaxNodeConnections` | `256` | Maximum retained node connections, bounding file-descriptor and memory growth as endpoints change. Valid range: 1–16,384. |
 | `ConnectionsPerNode` | `1` | Multiplexed connections opened per active node. Values above one reduce response head-of-line blocking between independent workloads. Valid range: 1–16 and no greater than `MaxNodeConnections`. |
@@ -65,7 +65,9 @@ redirects throw `ValkeyClusterException`.
 
 `ExecuteWithDeadlineAsync` applies one deadline across lazy node connection, the initial command,
 and all bounded redirects. A timeout after any command attempt reports `MayHaveBeenSent`; the
-affected node connection stays usable and drains a late reply.
+affected node connection drains a late reply. If the reply does not arrive within the seed's
+`ResponseDrainTimeout`, the physical connection is retired and replaced for the next command; the
+ambiguous timed-out command is not replayed.
 
 ```csharp
 public Task RefreshTopologyAsync(CancellationToken cancellationToken = default)

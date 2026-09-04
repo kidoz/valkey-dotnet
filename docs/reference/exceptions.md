@@ -94,8 +94,10 @@ expired. Its `Timeout` property reports the configured duration. `DeliveryStatus
 admission did not complete and `MayHaveBeenSent` after enqueue.
 
 Unlike caller cancellation, an operation deadline does not interrupt socket I/O and does not
-invalidate the connection. The background reader retains and drains the timed-out operation's FIFO
-entry before assigning later replies.
+immediately invalidate the connection. The background reader retains and drains the timed-out
+operation's FIFO entry before assigning later replies. If that retained response does not drain
+within `ResponseDrainTimeout`, the connection terminates and remaining callers receive
+`ValkeyConnectionException`.
 
 ## `ValkeyClusterException`
 

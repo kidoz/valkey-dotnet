@@ -88,6 +88,77 @@ public sealed class ValkeyClusterClientTests
     }
 
     [Fact]
+    public async Task ResponseDrainTimeoutReplacesTheStalledNodeConnectionForTheNextCommand()
+    {
+        const string key = "cluster-stalled-reply";
+        var firstCommandWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstConnectionRetired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var primary = FakeValkeyServer.StartMany(
+            2,
+            async (index, session) =>
+            {
+                await session.ExpectHandshakeAsync();
+                Assert.Equal(["GET", key], await session.ReadCommandAsync());
+                if (index == 0)
+                {
+                    firstCommandWritten.SetResult();
+                    try
+                    {
+                        await session.ReadCommandAsync();
+                    }
+                    finally
+                    {
+                        firstConnectionRetired.SetResult();
+                    }
+                }
+                else
+                {
+                    await session.SendAsync("$5\r\nfresh\r\n");
+                }
+            }
+        );
+        await using var seed = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            Assert.Equal(["CLUSTER", "SHARDS"], await session.ReadCommandAsync());
+            await session.SendAsync(ShardsTopology(primary.Port));
+        });
+        var options = Options(seed.Port);
+        var seedOptions = options.SeedNodes[0];
+        options = new ValkeyClusterOptions
+        {
+            SeedNodes =
+            [
+                new ValkeyClientOptions
+                {
+                    Host = seedOptions.Host,
+                    Port = seedOptions.Port,
+                    ConnectTimeout = seedOptions.ConnectTimeout,
+                    ResponseDrainTimeout = TimeSpan.FromMilliseconds(500),
+                },
+            ],
+        };
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            options,
+            TestContext.Current.CancellationToken
+        );
+        ValkeyArgument routingKey = key;
+
+        var command = cluster.ExecuteWithDeadlineAsync(
+            routingKey,
+            new ValkeyCommand("GET", routingKey),
+            TimeSpan.FromMilliseconds(500),
+            TestContext.Current.CancellationToken
+        );
+        await firstCommandWritten.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        var deadlineFailure = await Assert.ThrowsAsync<ValkeyCommandTimeoutException>(async () => await command);
+        Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, deadlineFailure.DeliveryStatus);
+        await firstConnectionRetired.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        Assert.Equal("fresh", await cluster.GetStringAsync(key, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task ConnectAsyncReadsShardsMapsEncodedForResp2()
     {
         FakeValkeyServer? seedServer = null;
