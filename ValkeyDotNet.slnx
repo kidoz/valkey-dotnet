@@ -1,0 +1,5 @@
+<Solution>
+    <Project Path="src/ValkeyDotNet/ValkeyDotNet.csproj" />
+    <Project Path="tests/ValkeyDotNet.Tests/ValkeyDotNet.Tests.csproj" />
+    <Project Path="benchmarks/ValkeyDotNet.Benchmarks/ValkeyDotNet.Benchmarks.csproj" />
+</Solution>
