@@ -1,0 +1,82 @@
+# Test servers for the live integration and compatibility suites.
+#
+#   just valkey-up            start every supported line and wait until ready
+#   just test-matrix          run the suite against 9.x, 8.x, and 7.x in turn
+#   just valkey-down          stop and remove containers and volumes
+#
+# Each service pins a maintained Valkey release line. Data is in-memory only:
+# these are disposable test servers, never a durable store.
+
+name: valkey-dotnet-tests
+
+x-valkey-common: &valkey-common
+  restart: "no"
+  command: ["valkey-server", "--save", "", "--appendonly", "no"]
+  healthcheck:
+    test: ["CMD", "valkey-cli", "-p", "6379", "ping"]
+    interval: 2s
+    timeout: 3s
+    retries: 15
+    start_period: 2s
+
+services:
+  # Latest line. This is the default target of `just test-live`.
+  valkey-9:
+    <<: *valkey-common
+    image: valkey/valkey:9.1
+    container_name: valkey-dotnet-9
+    ports:
+      - "6379:6379"
+
+  # Previous maintained line.
+  valkey-8:
+    <<: *valkey-common
+    image: valkey/valkey:8.1
+    container_name: valkey-dotnet-8
+    ports:
+      - "6380:6379"
+
+  # Oldest maintained line. RESP3 is available but several newer commands are not.
+  valkey-7:
+    <<: *valkey-common
+    image: valkey/valkey:7.2
+    container_name: valkey-dotnet-7
+    ports:
+      - "6381:6379"
+
+  # ACL-enabled server for authentication coverage. Same line as valkey-9.
+  valkey-acl:
+    <<: *valkey-common
+    image: valkey/valkey:9.1
+    container_name: valkey-dotnet-acl
+    command:
+      [
+        "valkey-server",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--user",
+        "default",
+        "on",
+        ">defaultpass",
+        "~*",
+        "&*",
+        "+@all",
+        "--user",
+        "appuser",
+        "on",
+        ">apppass",
+        "~app:*",
+        "+@read",
+        "+@write",
+        "+@connection",
+      ]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "6379", "-a", "defaultpass", "--no-auth-warning", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 2s
+    ports:
+      - "6382:6379"
