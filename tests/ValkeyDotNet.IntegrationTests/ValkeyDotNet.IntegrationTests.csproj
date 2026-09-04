@@ -2,4 +2,11 @@
     <PropertyGroup>
         <AssemblyName>ValkeyDotNet.IntegrationTests</AssemblyName>
     </PropertyGroup>
+    <ItemGroup>
+        <None
+            Include="../../dev/docker-compose.resilience.yml"
+            Link="docker-compose.resilience.yml"
+            CopyToOutputDirectory="PreserveNewest"
+        />
+    </ItemGroup>
 </Project>

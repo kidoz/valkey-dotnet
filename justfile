@@ -38,6 +38,15 @@ test:
 test-live endpoint="127.0.0.1:6379":
     VALKEYDOTNET_ENDPOINT={{ endpoint }} dotnet run --project {{ integration_tests }}
 
+# Explicitly create and restart a fresh isolated Docker server; never targets an existing endpoint.
+test-resilience $resilience_version="9.1" $resilience_cycles="3":
+    @case "$resilience_version" in 9.1|8.1|7.2) ;; *) echo "Version must be 9.1, 8.1, or 7.2" >&2; exit 2 ;; esac
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_RESTART_TESTS=1 VALKEYDOTNET_RESILIENCE_VERSION="$resilience_version" \
+    VALKEYDOTNET_RESILIENCE_CYCLES="$resilience_cycles" dotnet run --project {{ integration_tests }} -- \
+    -method '*OwnedServerRestartsRecoverWithoutOfflineWriteReplayOrResourceGrowth' \
+    -showLiveOutput -result-trx "artifacts/resilience/restart-$resilience_version.trx"
+
 # Start every supported Valkey line and wait until each is healthy.
 valkey-up:
     docker compose -f {{ compose }} up -d --wait

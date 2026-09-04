@@ -4,6 +4,10 @@
 
 ### Added
 
+- Bounded RESP2/RESP3 concurrent connection-loss regressions and recovery from a non-listening
+  loopback endpoint without replaying an unsent write.
+- Opt-in, ownership-validated Docker stop/start runner with configurable cycles, resource samples,
+  independent cleanup, and a manual Resilience workflow. Live restart execution remains opt-in.
 - Opt-in connection-owner metrics and activity tracing using only BCL APIs, with fixed-cardinality
   operation/error tags, reconnect/attempt counts, durations, and an active-operation gauge.
 - Listener exception isolation, privacy and ambient-trace regression tests, and live recovery

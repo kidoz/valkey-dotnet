@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using ValkeyDotNet.Tests.TestInfrastructure;
 
 namespace ValkeyDotNet.Tests;
@@ -6,6 +8,149 @@ namespace ValkeyDotNet.Tests;
 public sealed class ValkeyConnectionOwnerTests
 {
     private static CancellationToken TestToken => TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task NonListeningEndpointIsNotSentAndTheSameOwnerRecoversWhenItStarts()
+    {
+        // Bind without listening: reserve an exact local target that cannot accept a connection.
+        using var endpoint = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        endpoint.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        var port = ((IPEndPoint)endpoint.LocalEndPoint!).Port;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        await using var owner = new ValkeyConnectionOwner(
+            new ValkeyConnectionOwnerOptions
+            {
+                Connection = new ValkeyClientOptions
+                {
+                    Host = "127.0.0.1",
+                    Port = port,
+                    ConnectTimeout = TimeSpan.FromSeconds(1),
+                },
+                MaxConnectAttempts = 2,
+                InitialReconnectDelay = TimeSpan.FromMilliseconds(5),
+                MaxReconnectDelay = TimeSpan.FromMilliseconds(10),
+            }
+        );
+        var failure = await Assert.ThrowsAsync<ValkeyConnectionException>(() =>
+            owner.ExecuteAsync(new ValkeyCommand("INCR", "never-sent"), deadline.Token)
+        );
+        Assert.Equal(ValkeyCommandDeliveryStatus.NotSent, failure.DeliveryStatus);
+        // Kernels may refuse a bound/non-listening endpoint or silently drop its SYN packets.
+        if (failure.InnerException is SocketException socketFailure)
+            Assert.Equal(SocketError.ConnectionRefused, socketFailure.SocketErrorCode);
+        else
+            Assert.IsType<TimeoutException>(failure.InnerException);
+        Assert.Equal(ValkeyConnectionState.Disconnected, owner.State);
+
+        endpoint.Listen(1);
+        var serving = ServeAsync();
+        Assert.Equal("PONG", (await owner.ExecuteAsync(new ValkeyCommand("PING"), deadline.Token)).AsString());
+        await serving;
+
+        async Task ServeAsync()
+        {
+            using var accepted = await endpoint.AcceptAsync(deadline.Token);
+            using var cancellation = deadline.Token.Register(accepted.Dispose);
+            await using var stream = new NetworkStream(accepted, ownsSocket: false);
+            var session = new FakeValkeySession(stream, []);
+            await session.ExpectHandshakeAsync();
+            // The earlier write was not queued offline or replayed after the endpoint started.
+            Assert.Equal(["PING"], await session.ReadCommandAsync());
+            await session.SendAsync("+PONG\r\n");
+        }
+    }
+
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
+    public async Task RepeatedConcurrentLossSettlesEveryCallerAndKeepsOneConnectionPerCycle(ValkeyProtocol protocol)
+    {
+        const int cycles = 32;
+        const int callers = 16;
+        var activeSessions = 0;
+        var peakSessions = 0;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        await using var server = FakeValkeyServer.StartMany(
+            cycles,
+            async (_, session) =>
+            {
+                var active = Interlocked.Increment(ref activeSessions);
+                var peak = Volatile.Read(ref peakSessions);
+                while (active > peak)
+                {
+                    var observed = Interlocked.CompareExchange(ref peakSessions, active, peak);
+                    if (observed == peak)
+                        break;
+                    peak = observed;
+                }
+                try
+                {
+                    await session.ExpectHandshakeAsync(
+                        protocol == ValkeyProtocol.Resp2 ? FakeValkeyServer.HelloResp2 : FakeValkeyServer.HelloResp3
+                    );
+                    for (var i = 0; i < callers; i++)
+                    {
+                        var command = await session.ReadCommandAsync();
+                        Assert.Equal("ECHO", command[0]);
+                        await session.SendAsync($"+{command[1]}\r\n");
+                    }
+                    for (var i = 0; i < callers; i++)
+                        Assert.Equal(["INCR", "ambiguous"], await session.ReadCommandAsync());
+                }
+                finally
+                {
+                    // End this server-side session before permitting a replacement to arrive.
+                    Interlocked.Decrement(ref activeSessions);
+                    session.Close();
+                }
+            }
+        );
+        await using var owner = new ValkeyConnectionOwner(
+            new ValkeyConnectionOwnerOptions
+            {
+                Connection = new ValkeyClientOptions
+                {
+                    Host = "127.0.0.1",
+                    Port = server.Port,
+                    Protocol = protocol,
+                    MaxPendingRequests = callers,
+                },
+                MaxConcurrentOperations = callers,
+                InitialReconnectDelay = TimeSpan.FromMilliseconds(1),
+                MaxReconnectDelay = TimeSpan.FromMilliseconds(4),
+            }
+        );
+        for (var cycle = 0; cycle < cycles; cycle++)
+        {
+            var replies = await Task.WhenAll(
+                Enumerable
+                    .Range(0, callers)
+                    .Select(i => owner.ExecuteAsync(new ValkeyCommand("ECHO", i), deadline.Token))
+            );
+            Assert.Equal(
+                Enumerable.Range(0, callers).Select(i => i.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                replies.Select(reply => reply.AsString())
+            );
+            var failures = Enumerable
+                .Range(0, callers)
+                .Select(_ =>
+                    Assert.ThrowsAsync<ValkeyConnectionException>(() =>
+                        owner.ExecuteAsync(new ValkeyCommand("INCR", "ambiguous"), deadline.Token)
+                    )
+                );
+            foreach (var failure in await Task.WhenAll(failures))
+                Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, failure.DeliveryStatus);
+            Assert.Equal(ValkeyConnectionState.Disconnected, owner.State);
+        }
+        await owner.DisposeAsync();
+        await server.Session;
+        Assert.Equal(0, Volatile.Read(ref activeSessions));
+        Assert.Equal(1, Volatile.Read(ref peakSessions));
+        Assert.Equal(cycles, server.ReceivedCommands.Count(command => command[0] == "HELLO"));
+        Assert.Equal(cycles * callers, server.ReceivedCommands.Count(command => command[0] == "INCR"));
+    }
 
     [Fact]
     public async Task ConcurrentRecoveryKeepsOneReplacementAndRepeatsScopedTlsValidation()

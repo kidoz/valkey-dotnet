@@ -1,0 +1,50 @@
+name: Resilience
+
+# Deliberately manual: this workflow creates, stops, and starts its own disposable Valkey server.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Valkey line for the isolated restart experiment
+        type: choice
+        options: ["9.1", "8.1", "7.2"]
+        default: "9.1"
+      cycles:
+        description: Restart cycles per protocol (1-100, ten-minute limit per test)
+        type: string
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  restart:
+    name: Isolated restart smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      VALKEYDOTNET_RUN_RESTART_TESTS: "1"
+      VALKEYDOTNET_RESILIENCE_VERSION: ${{ inputs.version }}
+      VALKEYDOTNET_RESILIENCE_CYCLES: ${{ inputs.cycles }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+      - name: Run isolated restart tests
+        run: |
+          mkdir -p artifacts/resilience
+          dotnet run --project tests/ValkeyDotNet.IntegrationTests --configuration Release -- \
+            -method '*OwnedServerRestartsRecoverWithoutOfflineWriteReplayOrResourceGrowth' \
+            -showLiveOutput -result-trx artifacts/resilience/restart.trx
+      - name: Upload results and resource samples
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: restart-${{ inputs.version }}-results
+          path: artifacts/resilience/
+          if-no-files-found: warn

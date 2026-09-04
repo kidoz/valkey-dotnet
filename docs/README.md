@@ -19,6 +19,9 @@ and [connection owner reference](reference/connection-owner.md).
 Observability: [Collect owner telemetry](how-to/collect-telemetry.md) and
 [diagnostics reference](reference/diagnostics.md).
 
+Resilience: [Run isolated restart tests](how-to/run-resilience-tests.md) and
+[executed versus pending evidence](reference/resilience-evidence.md).
+
 ## Writing docs here
 
 Pick the quadrant before you write, and keep the page inside it:

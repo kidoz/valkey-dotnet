@@ -1,11 +1,140 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Globalization;
+using ValkeyDotNet.IntegrationTests.TestInfrastructure;
 
 namespace ValkeyDotNet.IntegrationTests;
 
 public sealed class ValkeyClientIntegrationTests
 {
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
+    public async Task OwnedServerRestartsRecoverWithoutOfflineWriteReplayOrResourceGrowth(ValkeyProtocol protocol)
+    {
+        if (Environment.GetEnvironmentVariable("VALKEYDOTNET_RUN_RESTART_TESTS") != "1")
+            Assert.Skip(
+                "Set VALKEYDOTNET_RUN_RESTART_TESTS=1 to create and restart an isolated disposable Docker server."
+            );
+        var version = Environment.GetEnvironmentVariable("VALKEYDOTNET_RESILIENCE_VERSION") ?? "9.1";
+        var cycles = int.Parse(
+            Environment.GetEnvironmentVariable("VALKEYDOTNET_RESILIENCE_CYCLES") ?? "3",
+            CultureInfo.InvariantCulture
+        );
+        if (cycles is < 1 or > 100)
+            throw new InvalidOperationException("VALKEYDOTNET_RESILIENCE_CYCLES must be between 1 and 100.");
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromMinutes(10));
+        var token = deadline.Token;
+        await using var server = new RestartValkeyServer(version);
+        await server.StartNewAsync(token);
+        var activeOperations = -1L;
+        using var metrics = new MeterListener();
+        metrics.InstrumentPublished = (instrument, listener) =>
+        {
+            if (
+                instrument.Meter.Name == ValkeyDiagnostics.MeterName
+                && instrument.Name == "valkey.owner.operations.active"
+            )
+                listener.EnableMeasurementEvents(instrument);
+        };
+        metrics.SetMeasurementEventCallback<long>(
+            (_, value, _, _) => Interlocked.Exchange(ref activeOperations, value)
+        );
+        metrics.Start();
+        await using var owner = new ValkeyConnectionOwner(
+            new ValkeyConnectionOwnerOptions
+            {
+                Connection = new ValkeyClientOptions
+                {
+                    Host = "127.0.0.1",
+                    Port = server.Port,
+                    Protocol = protocol,
+                    ClientName = "resilience-owner",
+                    ConnectTimeout = TimeSpan.FromMilliseconds(300),
+                    MaxPendingRequests = 16,
+                },
+                MaxConcurrentOperations = 16,
+                MaxConnectAttempts = 2,
+                EnableTelemetry = true,
+                InitialReconnectDelay = TimeSpan.FromMilliseconds(10),
+                MaxReconnectDelay = TimeSpan.FromMilliseconds(40),
+            }
+        );
+        var script = new ValkeyScript("return ARGV[1]");
+        var previousRun = ReadInfoValue(
+            (await owner.ExecuteAsync(new ValkeyCommand("INFO", "server"), token)).AsString()!,
+            "run_id"
+        );
+        Assert.Equal("warm", (await owner.ExecuteScriptAsync(script, [], ["warm"], token)).AsString());
+        using var process = Process.GetCurrentProcess();
+        long? baselineHeap = null;
+        int? baselineHandles = null;
+        for (var cycle = 0; cycle < cycles; cycle++)
+        {
+            await server.StopAsync(token);
+            while (owner.State == ValkeyConnectionState.Connected)
+                await Task.Delay(10, token);
+            Assert.Equal(ValkeyConnectionState.Disconnected, owner.State);
+            var offline = await Assert.ThrowsAsync<ValkeyConnectionException>(() =>
+                owner.ExecuteAsync(new ValkeyCommand("INCR", "offline-write"), token)
+            );
+            Assert.Equal(ValkeyCommandDeliveryStatus.NotSent, offline.DeliveryStatus);
+            Assert.Equal(ValkeyConnectionState.Disconnected, owner.State);
+            await server.RestartAsync(token);
+            var replies = await Task.WhenAll(
+                Enumerable.Range(0, 16).Select(i => owner.ExecuteAsync(new ValkeyCommand("ECHO", i), token))
+            );
+            Assert.Equal(
+                Enumerable.Range(0, 16).Select(i => i.ToString(CultureInfo.InvariantCulture)),
+                replies.Select(reply => reply.AsString())
+            );
+            Assert.Equal("reloaded", (await owner.ExecuteScriptAsync(script, [], ["reloaded"], token)).AsString());
+            Assert.True((await owner.ExecuteAsync(new ValkeyCommand("GET", "offline-write"), token)).IsNull);
+            var info = (await owner.ExecuteAsync(new ValkeyCommand("INFO", "server"), token)).AsString()!;
+            var currentRun = ReadInfoValue(info, "run_id");
+            Assert.NotEqual(previousRun, currentRun);
+            previousRun = currentRun;
+            var clients = (await owner.ExecuteAsync(new ValkeyCommand("CLIENT", "LIST"), token)).AsString()!;
+            Assert.Single(
+                clients.Split('\n', StringSplitOptions.RemoveEmptyEntries),
+                line => line.Split(' ').Contains("name=resilience-owner", StringComparer.Ordinal)
+            );
+            metrics.RecordObservableInstruments();
+            Assert.Equal(0, Interlocked.Read(ref activeOperations));
+            var heap = GC.GetTotalMemory(forceFullCollection: true);
+            process.Refresh();
+            var handles = process.HandleCount;
+            baselineHeap ??= heap;
+            baselineHandles ??= handles;
+            Assert.True(
+                heap <= baselineHeap.Value + 16 * 1024 * 1024,
+                "Post-GC heap exceeded the restart smoke-test growth budget."
+            );
+            Assert.True(
+                handles <= baselineHandles.Value + 32,
+                "Open handles exceeded the restart smoke-test growth budget."
+            );
+            TestContext.Current.TestOutputHelper?.WriteLine(
+                $"version={ReadInfoValue(info, "valkey_version")} protocol={protocol} cycle={cycle + 1}/{cycles} "
+                    + $"heap_bytes={heap} handles={handles} pool_threads={ThreadPool.ThreadCount} queued_work={ThreadPool.PendingWorkItemCount} owner_clients=1 active_operations=0"
+            );
+        }
+        await owner.DisposeAsync();
+        Assert.Equal(ValkeyConnectionState.Disposed, owner.State);
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"Completed restart experiment on isolated project {server.Project}; fixture cleanup follows."
+        );
+    }
+
+    private static string ReadInfoValue(string info, string key)
+    {
+        var prefix = key + ":";
+        return info.Split('\n')
+            .Single(line => line.StartsWith(prefix, StringComparison.Ordinal))[prefix.Length..]
+            .Trim();
+    }
+
     [Theory]
     [InlineData(ValkeyProtocol.Resp2)]
     [InlineData(ValkeyProtocol.Resp3)]

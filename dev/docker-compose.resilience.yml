@@ -1,0 +1,20 @@
+# Only the opt-in restart fixture starts this file, with a fresh project/token and loopback port.
+# No existing endpoint, durable volume, credentials, or other Compose project is used.
+services:
+  server:
+    image: valkey/valkey:${VALKEYDOTNET_RESILIENCE_VERSION:?}
+    restart: "no"
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    mem_limit: 128m
+    cpus: 1
+    tmpfs:
+      - /data:size=16m
+    labels:
+      com.valkeydotnet.resilience-token: ${VALKEYDOTNET_RESILIENCE_TOKEN:?}
+    ports:
+      - "127.0.0.1:${VALKEYDOTNET_RESILIENCE_PORT:?}:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
