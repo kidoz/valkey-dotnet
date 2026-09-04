@@ -16,20 +16,20 @@ contain no network round trip and are not throughput figures for a real Valkey d
 
 | Operation | Mean | Allocated per operation |
 | --- | ---: | ---: |
-| Encode a 1 KiB binary-safe `SET` command | 344.3 ns | 5.41 KiB |
-| Parse a four-entry RESP3 map | 1.146 µs | 12.38 KiB |
+| Encode a 1 KiB binary-safe `SET` command | 63.32 ns | 1.09 KiB |
+| Parse a four-entry RESP3 map | 506.25 ns | 1.15 KiB |
 
-The full unedited harness output, including error, standard deviation, and GC-generation columns, is
-retained outside the published tree in `.agents/research/BENCHMARK_RECORD.md`.
+The harness summary, including error, standard deviation, and GC-generation columns, is retained
+outside the published tree in `.agents/research/BENCHMARK_RECORD.md`.
 
 ## Reproducing
 
 ```bash
-just bench
+just bench --filter '*'
 ```
 
-Equivalent to `dotnet run -c Release --project benchmarks/ValkeyDotNet.Benchmarks`. Release
-configuration is required; a Debug run does not produce meaningful numbers.
+Equivalent to `dotnet run -c Release --project benchmarks/ValkeyDotNet.Benchmarks -- --filter '*'`.
+Release configuration is required; a Debug run does not produce meaningful numbers.
 
 Mean times are hardware-specific. Re-run the suite on the target deployment hardware before using
 these figures for capacity planning. Allocation figures are stable across machines and are the more
@@ -37,11 +37,16 @@ useful regression signal.
 
 ## Known characteristics
 
-Allocation currently exceeds what the protocol path requires. Both measured operations allocate
-several times the payload size because encoding and parsing use temporary strings, arrays, and
-`MemoryStream` instances rather than pooled buffers and span-based parsing.
+Command encoding computes the exact wire length first and allocates only the returned payload. The
+1.09 KiB allocation for the 1 KiB command is therefore the encoded command itself, including RESP
+framing, with no temporary writer buffer or header strings.
 
-This is the clearest optimization opportunity in the library, and it matters most for pipelined
-workloads, where per-command allocation multiplies across the batch. Any change here must preserve
-the frame-size and nesting bounds described in [Client options](client-options.md) and the binary
-safety described in [RESP values](resp-values.md); a faster parser that drops either is a regression.
+The parser measurement is steady-state: one reader and its 8 KiB connection buffer are created in
+global setup, then a repeating stream supplies frames. The reported allocation is the decoded reply
+graph and temporary scalar parsing data, not per-connection setup. The previous 12.38 KiB figure
+included a new reader and stream in every measured operation and is not directly comparable.
+
+Remaining allocation work is concentrated in fragmented long lines, streamed strings, verbatim
+strings, and scalar text parsing. Any change there must preserve the response-byte, decoded-element,
+and nesting bounds described in [Client options](client-options.md) and the binary safety described
+in [RESP values](resp-values.md).

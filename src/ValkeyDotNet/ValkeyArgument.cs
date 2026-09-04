@@ -3,7 +3,10 @@ using System.Text;
 
 namespace ValkeyDotNet;
 
-/// <summary>A binary-safe command argument.</summary>
+/// <summary>
+/// A binary-safe command argument. Byte memory is borrowed rather than copied; callers must not
+/// mutate its backing storage while a command containing the argument is executing.
+/// </summary>
 public readonly struct ValkeyArgument
 {
     private readonly ReadOnlyMemory<byte> _value;

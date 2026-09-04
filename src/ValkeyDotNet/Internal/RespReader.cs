@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Numerics;
 using System.Text;
@@ -306,17 +307,42 @@ internal sealed class RespReader
 
     private async ValueTask<byte[]> ReadLineAsync(CancellationToken cancellationToken)
     {
-        using var output = new MemoryStream();
+        ArrayBufferWriter<byte>? output = null;
         while (true)
         {
-            var current = await ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            if (current == (byte)'\r')
+            if (_offset == _length)
+                await FillAsync(cancellationToken).ConfigureAwait(false);
+
+            var available = _buffer.AsSpan(_offset, _length - _offset);
+            var delimiter = available.IndexOf((byte)'\r');
+            if (delimiter >= 0)
             {
+                EnsureBytesFit(delimiter + 2);
+                byte[] result;
+                if (output is null)
+                {
+                    result = available[..delimiter].ToArray();
+                }
+                else
+                {
+                    output.Write(available[..delimiter]);
+                    result = output.WrittenSpan.ToArray();
+                }
+
+                _offset += delimiter;
+                CountBytes(delimiter);
+                _offset++;
+                CountBytes(1);
                 if (await ReadByteAsync(cancellationToken).ConfigureAwait(false) != (byte)'\n')
                     throw new ValkeyProtocolException("RESP line ended with CR not followed by LF.");
-                return output.ToArray();
+                return result;
             }
-            output.WriteByte(current);
+
+            EnsureBytesFit(available.Length);
+            output ??= new ArrayBufferWriter<byte>(Math.Min(available.Length * 2, _maxResponseBytes));
+            output.Write(available);
+            _offset = _length;
+            CountBytes(available.Length);
         }
     }
 
@@ -367,6 +393,12 @@ internal sealed class RespReader
     {
         _frameBytes = checked(_frameBytes + count);
         if (_frameBytes > _maxResponseBytes)
+            throw new ValkeyProtocolException($"RESP frame exceeds the configured limit of {_maxResponseBytes} bytes.");
+    }
+
+    private void EnsureBytesFit(int count)
+    {
+        if (count > _maxResponseBytes - _frameBytes)
             throw new ValkeyProtocolException($"RESP frame exceeds the configured limit of {_maxResponseBytes} bytes.");
     }
 
