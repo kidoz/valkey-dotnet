@@ -3,6 +3,10 @@
 Measured protocol-code costs. These are **local** measurements of encoding and parsing only — they
 contain no network round trip and are not throughput figures for a real Valkey deployment.
 
+Separate [real-server cache/lock observations](roundtrip-performance.md) now cover round trips,
+shared-socket contention, request latency percentiles, and process-wide managed allocations.
+They use a different measurement contract and are not directly comparable with these codec numbers.
+
 ## Measurement environment
 
 | Field | Value |
