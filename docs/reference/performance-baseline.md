@@ -8,8 +8,9 @@ shared-socket contention, request latency percentiles, and process-wide managed 
 They use a different measurement contract and are not directly comparable with these codec numbers.
 
 Separate [GET/pipeline allocation observations](allocation-profile.md) identify allocation stacks
-and record a paired reply-graph control (64 bytes of unfragmented parsing overhead per 1 KiB reply).
-No shipping optimization or change to the original two measurements below is implied.
+and record the buffered bulk-length optimization: 64 fewer bytes per unfragmented 1 KiB reply,
+with paired before/after codec and real-server measurements. The original two measurements below
+remain historical and unchanged.
 
 ## Measurement environment
 
@@ -58,3 +59,8 @@ Remaining allocation work is concentrated in fragmented long lines, streamed str
 strings, and scalar text parsing. Any change there must preserve the response-byte, decoded-element,
 and nesting bounds described in [Client options](client-options.md) and the binary safety described
 in [RESP values](resp-values.md).
+
+Complete unsigned decimal bulk-length headers now parse directly from the existing connection
+buffer. The entire header is charged to the frame budget before payload allocation. Other forms
+and incomplete headers retain the existing bounded line parser; returned payloads remain owned
+arrays, not pooled or borrowed connection memory.

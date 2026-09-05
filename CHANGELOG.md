@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Performance
+
+- Parse complete unsigned decimal bulk-length headers directly from the bounded reader buffer,
+  avoiding temporary length arrays/strings. The 1 KiB reply codec control saves 64 B/reply;
+  signed, null, streamed, fragmented and malformed headers retain the existing parser path.
+
 ### Fixed
 
 - Cluster discovery skips failed/loading former primaries when a promoted primary is available.

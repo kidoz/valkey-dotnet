@@ -1,6 +1,7 @@
 # GET and pipeline allocation observations
 
-Local profiling on 6 September 2026 (Europe/Moscow), with no shipping-library optimization.
+Initial local profiling on 6 September 2026 (Europe/Moscow), before shipping-library optimization.
+The final section records the subsequent buffered bulk-length optimization and its comparison.
 The [profiling guide](../how-to/profile-allocations.md) defines reproduction and safety controls.
 The earlier [round-trip reference](roundtrip-performance.md) remains a separate, untraced baseline.
 
@@ -62,9 +63,9 @@ pending queue, async suspension or fragmented header in this control.
 
 The measured difference is 64 bytes per reply, or 6400 bytes per 100 replies. Source inspection
 matches two temporary representations of the four-byte length text: a byte array from
-`ReadLineAsync` and an ASCII string from `ReadAsciiLineAsync`. This establishes the current
+`ReadLineAsync` and an ASCII string from `ReadAsciiLineAsync`. This established the pre-optimization
 unfragmented parsing overhead; `MaterializeReplies` is not a replacement parser. No reduction or
-throughput improvement has been implemented or measured. Timings are short-run local observations;
+throughput improvement was implemented or measured at that stage. Timings are short-run local observations;
 BenchmarkDotNet could not raise process priority on this host.
 
 A second complete four-case run reproduced all four exact allocation figures. Its means were
@@ -95,3 +96,64 @@ Debug profiling and unsupported operation names were rejected before Docker crea
 
 Fragmented/streamed replies, other payloads and runtimes, cluster/TLS, retained-memory behavior,
 and longer-running resource evidence remain outside this profile.
+
+## Buffered bulk-length optimization
+
+Implemented and measured later on 6 September 2026 in the same environment. The common complete
+unsigned-decimal header is parsed in place, with an overflow guard before every multiply/add.
+The fast path consumes nothing on a miss. Signed/null/streamed/non-decimal/overflowing/incomplete
+headers still use the existing line parser, preserving its grammar, diagnostics and fragmentation
+behavior. Blob strings, blob errors and verbatim strings share this path. Streamed chunk lengths
+and aggregate/scalar parsing are unchanged.
+
+Every header byte, including CRLF, is charged against the response budget before the existing
+bounded payload allocator runs. Element/depth checks still precede blob parsing, and payload arrays
+retain their independent ownership. No parser option/default, API, runtime dependency, cancellation
+invalidation or retry behavior changed.
+
+Fresh before/after BenchmarkDotNet ShortRun jobs used the unchanged paired control (one launch,
+three warm-ups/measurements each). These are sequential jobs, not randomized interleaved samples.
+
+| ParseReplies unit | Before mean ± error | After mean ± error | Before B/unit | After B/unit |
+|---|---:|---:|---:|---:|
+| One 1 KiB reply | 190.65 ± 28.52 ns | 146.70 ± 27.56 ns | 1224 | 1160 |
+| 100 replies | 18728.55 ± 544.39 ns | 13688.99 ± 2091.95 ns | 120024 | 113624 |
+
+Error is the half-width of the 99.9% confidence interval. The materialization controls stayed at
+1160 / 113624 B; their means were 47.08 / 4958.43 ns before and 48.19 / 4625.26 ns after. Thus the
+64 B/reply allocation delta disappeared for this unfragmented workload, without removing payload
+or reply objects. Short-run timing reductions are local observations, not portable speedup guarantees.
+
+The unchanged untraced real-server profile also completed all 24 rows before and after. Selected
+eight-caller rows (one unit is a GET or a 100-key batch):
+
+| Protocol / unit | Before → after B/unit | Before → after units/s | Before → after p99 µs |
+|---|---:|---:|---:|
+| RESP2 GET | 2496.36 → 2429.22 | 26831 → 25619 | 754 → 886 |
+| RESP3 GET | 2477.71 → 2435.79 | 26298 → 29315 | 950 → 637 |
+| RESP2 pipeline | 152683.27 → 146289.04 | 1677 → 2264 | 8501 → 6044 |
+| RESP3 pipeline | 152648.69 → 146275.29 | 2177 → 2121 | 6648 → 6521 |
+
+Process-wide allocations include async/gate/harness variability; fragmentation can still take the
+fallback path. Throughput and tails moved in both directions on this shared host, including slower
+RESP2 GET and RESP3 pipeline throughput. No general end-to-end speedup or CI threshold follows.
+
+The 42 new regression cases cover binary payloads and next-reply ownership across every split,
+null/empty/signed/zero-padded forms, malformed/overflow/truncated input, every smaller frame-byte
+budget, element/depth limits, cancellation during fallback, a header larger than the 8 KiB buffer,
+and buffered-versus-fragmented outcomes for all 256 possible inserted header bytes. A maximum
+Int32 length is rejected before a large payload allocation. All 484 unit tests, 196 harness checks,
+and both live RESP2/RESP3 workload checks passed; the live cases took 1.420 seconds.
+Unit and harness checks passed in both Debug/Release; full builds and `just ci` also passed.
+Maintainer review remains required for this untrusted-input parser change before release.
+
+Evidence under `artifacts/performance/`:
+
+- `blob-length-before/` and `blob-length-after/`: complete codec logs and full JSON reports.
+- Before: `roundtrips-valkey-dotnet-bench-030bea491f4e4ef084966989fe442cfc.json`.
+- After: `roundtrips-valkey-dotnet-bench-2639dbd8e3be4a36aa1023ee95736f7e.json`.
+- `roundtrip-workloads.trx`: separate correctness run.
+
+The four owned containers across the comparison and correctness runs were removed; no networks
+were created or removed. Fragmented/signed/streamed forms remain correct but have no claimed
+allocation improvement. Wider payload/runtime/version/TLS/cluster performance remains unmeasured.

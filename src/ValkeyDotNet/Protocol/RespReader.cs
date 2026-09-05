@@ -90,30 +90,71 @@ internal sealed class RespReader
 
     private async ValueTask<RespValue> ReadBlobAsync(RespType type, bool nullable, CancellationToken cancellationToken)
     {
-        var lengthText = await ReadAsciiLineAsync(cancellationToken).ConfigureAwait(false);
-        if (lengthText == "?")
+        if (!TryReadBufferedBlobLength(out var length))
         {
-            using var output = new MemoryStream();
-            while (true)
+            var lengthText = await ReadAsciiLineAsync(cancellationToken).ConfigureAwait(false);
+            if (lengthText == "?")
             {
-                if (await ReadByteAsync(cancellationToken).ConfigureAwait(false) != (byte)';')
-                    throw new ValkeyProtocolException("A streamed string chunk must start with ';'.");
-                var chunkLength = ParseChunkLength(await ReadAsciiLineAsync(cancellationToken).ConfigureAwait(false));
-                if (chunkLength == 0)
-                    break;
-                var chunk = await ReadExactAsync(chunkLength, cancellationToken).ConfigureAwait(false);
-                await ExpectCrLfAsync(cancellationToken).ConfigureAwait(false);
-                output.Write(chunk);
+                using var output = new MemoryStream();
+                while (true)
+                {
+                    if (await ReadByteAsync(cancellationToken).ConfigureAwait(false) != (byte)';')
+                    {
+                        throw new ValkeyProtocolException("A streamed string chunk must start with ';'.");
+                    }
+                    var chunkLength = ParseChunkLength(
+                        await ReadAsciiLineAsync(cancellationToken).ConfigureAwait(false)
+                    );
+                    if (chunkLength == 0)
+                    {
+                        break;
+                    }
+                    var chunk = await ReadExactAsync(chunkLength, cancellationToken).ConfigureAwait(false);
+                    await ExpectCrLfAsync(cancellationToken).ConfigureAwait(false);
+                    output.Write(chunk);
+                }
+                return RespValue.Bytes(type, output.ToArray());
             }
-            return RespValue.Bytes(type, output.ToArray());
+            length = ParseCount(lengthText, nullable, type);
         }
 
-        var length = ParseCount(lengthText, nullable, type);
         if (length < 0)
+        {
             return RespValue.Null();
+        }
         var value = await ReadExactAsync(length, cancellationToken).ConfigureAwait(false);
         await ExpectCrLfAsync(cancellationToken).ConfigureAwait(false);
         return RespValue.Bytes(type, value);
+    }
+
+    // Only the common, complete unsigned-decimal header is handled here. A miss consumes nothing:
+    // the existing line parser retains signed/null/streamed forms, diagnostics and fragmentation.
+    private bool TryReadBufferedBlobLength(out int length)
+    {
+        length = 0;
+        var available = _buffer.AsSpan(_offset, _length - _offset);
+        var delimiter = available.IndexOf((byte)'\r');
+        if (delimiter <= 0 || delimiter + 1 >= available.Length || available[delimiter + 1] != (byte)'\n')
+        {
+            return false;
+        }
+        var headerBytes = delimiter + 2;
+        EnsureBytesFit(headerBytes);
+        var value = 0;
+        foreach (var character in available[..delimiter])
+        {
+            var digit = character - (byte)'0';
+            if ((uint)digit > 9 || value > (int.MaxValue - digit) / 10)
+            {
+                return false;
+            }
+            value = value * 10 + digit;
+        }
+        // Charge the entire header before ReadExactAsync can allocate from the parsed length.
+        _offset += headerBytes;
+        CountBytes(headerBytes);
+        length = value;
+        return true;
     }
 
     private async ValueTask<RespValue> ReadVerbatimAsync(CancellationToken cancellationToken)
