@@ -142,6 +142,13 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [post-snapshot rollback runner](../how-to/run-atomic-rollback-tests.md) passed RESP2/RESP3 on
+Valkey 9.1.2 on 2026-09-05. Two provisional destination keys were observed before closing the exact
+export link. Both jobs failed and imported keys disappeared; source values/expiration, ownership,
+registrations, and the same sharded stream survived with zero losses, attempts, relocations, or drops.
+This is pre-cutover link failure, not interruption inside a partial snapshot or post-handoff recovery.
+See the [execution record](resilience-evidence.md#post-snapshot-atomic-rollback--2026-09-05).
+
 The [pre-transfer cancellation runner](../how-to/run-atomic-cancellation-tests.md) passed RESP2/RESP3
 on Valkey 9.1.2 on 2026-09-05. An observed active export became cancelled before transfer; source
 ownership, binary keys/expiration, registrations, and the original sharded stream stayed unchanged,
@@ -230,5 +237,5 @@ This live success is separate from overall unit-suite readiness: immediate-close
 and rejection regressions failed intermittently during that verification session. A subsequent
 shutdown-isolation change passed the expanded unit suite and repeated runs. See
 [subscriber verification evidence](subscriber.md#verification-evidence).
-Mid-transfer atomic failure/late cancellation, transfer-failure reconciliation, TLS recovery, prolonged soak, and performance
+Other atomic failure timing/late cancellation, transfer-failure reconciliation, TLS recovery, prolonged soak, and performance
 evidence remain separate work.

@@ -309,3 +309,48 @@ Mid-transfer failure/late cancellation, partial-import cleanup, ambiguous EXEC o
 reconciliation, concurrent writes, TLS, other versions, and sustained soak remain unverified by this
 run. This is not caller-token cancellation or lock-lease safety evidence. The
 [run guide](../how-to/run-atomic-cancellation-tests.md) defines the exact experiment and safety limits.
+
+## Post-snapshot atomic rollback — 2026-09-05
+
+`just test-atomic-rollback` passed both Release RESP2/RESP3 cases on Valkey 9.1.2 in 25.422 seconds,
+with zero failures or skips. Each fresh three-primary cluster contained two source binary strings,
+a 4 KiB expiring value and a small persistent value. Host/runtime were macOS arm64, SDK 10.0.400
+and .NET 10.0.11; nodes were capped at 128 MiB/one CPU, without TLS.
+
+The source's local-only PREVENT-PAUSE debug hook held the export at `waiting-to-pause`. Both exact
+provisional keys were observed at the destination with COUNTKEYSINSLOT=2 and a correlated active
+IMPORT job. A direct destination GET still returned MOVED. Source values/TTL, all slot maps,
+and binary sharded delivery passed while migration was held. This mirrors the hook used in the
+[Valkey 9.1.2 tests](https://github.com/valkey-io/valkey/blob/9.1.2/tests/unit/cluster/cluster-migrateslots.tcl).
+
+One exact export-client ID was resolved, rechecked, and closed per case. Both correlated jobs
+became `failed`, destination slot-key count reached zero, and export/import clients disappeared.
+No migration retry was attempted. Source binary values and original PEXPIRETIME survived (0 ms
+shift), with positive expiring TTL and persistent PTTL=-1. Slot ownership and source registrations
+remained unchanged. The same sharded handle/enumerator/completion task delivered after rollback
+with zero losses, attempts, relocations, or drops; the unrelated channel was unaffected.
+
+DEBUG was local-only in the separate owned rollback fixture and invoked inside the source container.
+The hook was cleared in finally; normal fixtures retained DEBUG=no. The fixture overwrites inherited
+debug-mode environment values, verifies owned identities/membership/two-key budget, and refuses
+pre-existing migration histories. The client-ID parser rejects multiple records, duplicate fields,
+invalid IDs, absent export flags, and input larger than 16 KiB. Admin work has a 45-second bound
+after membership preflight; hook restoration has ten independent seconds, and fixture cleanup has
+60 independent seconds. No shipping code, runtime dependency, parser bound, or retry policy changed.
+
+All four known source keys were deleted; every node had zero keys/shard channels/named application
+clients before six containers/two networks were removed. Evidence:
+`artifacts/resilience/atomic-rollback.trx`. All 442 unit tests and 68 harness checks passed in Debug
+and Release. Builds and formatting passed; both new live cases skipped without opt-in. The manual
+**Atomic migration rollback** workflow was added, not dispatched.
+
+The shared-fixture regression passed six legacy, healthy atomic, and early-cancellation cases
+across both protocols in 77.961 seconds (`artifacts/resilience/migration-after-rollback.trx`).
+All ordinary fixtures reported DEBUG=no. Eighteen more containers and six networks were removed;
+the pre-existing hostloom services remained healthy and other application resources were unchanged.
+
+This establishes provisional-import cleanup after a completed two-key snapshot and before cutover.
+Interruption during a serialized value or partial snapshot, post-handoff failure, late administrative
+cancellation, transfer-error reconciliation, concurrent writes, TLS, cross-version faults, lock safety,
+and prolonged soak are separate evidence requirements. The
+[run guide](../how-to/run-atomic-rollback-tests.md) defines the exact safety boundary.
