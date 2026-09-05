@@ -30,8 +30,13 @@ Compose networks were removed; the two pre-existing stopped containers remained 
 Downloaded images remain cached. This short run establishes neither leak freedom nor restart
 compatibility with Valkey 7.2/8.1; those versions were not exercised in this experiment.
 
-DNS-resolution faults, abrupt primary failover, partitions, prolonged soak, and subscriber restoration
-still need dedicated evidence. No transport retry policy was changed to make these tests pass.
+Subscriber connection-loss restoration subsequently passed six live RESP2/RESP3 cases on Valkey
+9.1.2, 8.1.10, and 7.2.14: three exact-ID connection kills per case, eighteen successful recoveries,
+and verified cleanup. See [subscriber verification evidence](subscriber.md#verification-evidence).
+
+DNS-resolution faults, abrupt primary failover, partitions, prolonged soak, and subscriber
+server-restart restoration still need dedicated evidence. No transport retry policy was changed
+to make these experiments pass.
 
 See [Run isolated restart tests](../how-to/run-resilience-tests.md) for the experiment's safety and
 cleanup contract.

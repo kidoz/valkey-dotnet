@@ -140,5 +140,24 @@ The recovery follow-up passed all 271 local unit tests, including 49 subscriber 
 2026-09-05. New deterministic cases cover binary stream preservation, shared registration ownership,
 unsubscribe during handshake and in-flight restoration, failed unconfirmed changes, bounded retries,
 terminal rejection, recovery timeout, disposal, TLS/session restoration, parser bounds, and twelve
-successive reconnects per protocol. The new live `CLIENT KILL ID` test is opt-in and has not yet been
-executed; the earlier six live Pub/Sub passes do not establish live restoration evidence.
+successive reconnects per protocol.
+
+With explicit disposable-target confirmation, the opt-in `CLIENT KILL ID` test passed locally on
+2026-09-05 against fresh Valkey 9.1.2, 8.1.10, and 7.2.14 containers. Each version passed RESP2 and
+RESP3 with three forced connection losses per case: six passing cases, eighteen successful
+restorations, and no failures or skips. The two-case runs took 0.263, 0.260, and 0.259 seconds,
+respectively; these test durations are not performance benchmarks.
+
+Before each fault the test proved binary channel/pattern delivery, then resolved the sole
+nonce-named subscriber and killed only its exact client ID. It verified a changed ID after each
+restoration, one channel and one pattern registration, restored database/client-name/protocol
+settings, three attempts for three successful recoveries, zero queue drops, successful final
+unsubscribe, and an unaffected publisher. TLS restoration remains deterministic-test evidence,
+not part of this plaintext live run.
+
+The containers used a checked local Docker Unix socket, loopback-only ports, 128 MiB/one-CPU limits,
+temporary data storage, and disabled persistence. Each case had a thirty-second abort deadline.
+All three owned containers were removed after testing; both pre-existing stopped containers were
+untouched. Images remain cached. TRX records are retained locally under
+`artifacts/resilience/subscriber-recovery-{9.1,8.1,7.2}.trx`. This is connection-loss recovery
+evidence, not server-restart, partition, prolonged-soak, or cluster subscription-routing evidence.
