@@ -18,7 +18,7 @@ with RESP2, RESP3, TLS, pipelining, and cluster routing.
 
 ## Status
 
-ValkeyDotNet 1.0.0 is the first stable release for standalone Valkey and primary-routed Valkey
+ValkeyDotNet 1.1.0 is a stable release for standalone Valkey and primary-routed Valkey
 Cluster workloads. Supported features are implemented and tested; unsupported behavior fails
 explicitly. See the [changelog](CHANGELOG.md) for release notes.
 
@@ -38,20 +38,18 @@ Implemented:
 - `CLUSTER SHARDS` discovery with `CLUSTER SLOTS` fallback, CRC16/hash-tag routing, endpoint mapping,
   bounded `MOVED`/`ASK` handling, and slot-grouped cluster pipelines
 - Configurable bounded connections per cluster node for head-of-line isolation
+- A [dedicated Pub/Sub subscriber](docs/reference/subscriber.md) with bounded binary message streams
+  and opt-in subscription restoration, plus [sharded Pub/Sub and a cluster subscriber](docs/reference/cluster-subscriber.md)
+- [RESP3 client tracking](docs/reference/client-tracking.md) with binary invalidations, NOLOOP, and
+  BCAST/PREFIX
+- A [standalone connection owner](docs/reference/connection-owner.md) with bounded recovery and
+  explicit retry authorization, structured Lua scripting, and isolated per-operation deadlines
+- Opt-in owner [metrics and tracing](docs/reference/diagnostics.md), free of command or payload capture
 
-Not included in 1.0.0: replica reads, cluster-wide scans, Sentinel discovery, general-purpose
-pooling, tracking lifecycle, and sharded Pub/Sub. See
+Not included in 1.1.0: replica reads, cluster-wide scans, Sentinel discovery, general-purpose
+pooling, and automatic subscription relocation during slot migration. See
 [the connection model](docs/explanation/connection-model.md) for why, and
 [why managed-only](docs/explanation/why-managed-only.md) for the positioning.
-
-The unreleased development version also includes [RESP3 tracking](docs/reference/client-tracking.md),
-[sharded Pub/Sub primitives](docs/reference/cluster-subscriber.md), and a [dedicated Pub/Sub subscriber](docs/reference/subscriber.md)
-with bounded binary message streams and opt-in subscription restoration, structured scripting, isolated deadlines, and a
-[standalone connection owner](docs/reference/connection-owner.md) with bounded recovery and explicit
-retry authorization. These additions are not in the published 1.0.0 package.
-
-Owner [metrics and tracing](docs/reference/diagnostics.md) are also available in development,
-explicitly opt-in and free of command or payload capture.
 
 ## Requirements
 
@@ -63,7 +61,7 @@ explicitly opt-in and free of command or payload capture.
 ## Installation
 
 ```xml
-<PackageReference Include="ValkeyDotNet" Version="1.0.0" />
+<PackageReference Include="ValkeyDotNet" Version="1.1.0" />
 ```
 
 ## Documentation
