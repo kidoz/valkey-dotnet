@@ -5,7 +5,7 @@ namespace ValkeyDotNet;
 /// <summary>
 /// Routes sharded Pub/Sub to primaries using dedicated sockets, never ordinary command connections.
 /// Each handle owns one socket. Initial MOVED refresh and ASK redirection are bounded;
-/// established-subscription topology changes remain explicit failures, not silent relocation.
+/// established subscriptions can opt into bounded topology recovery with their original queues.
 /// </summary>
 public sealed class ValkeyClusterSubscriber : IAsyncDisposable
 {
@@ -13,6 +13,7 @@ public sealed class ValkeyClusterSubscriber : IAsyncDisposable
     private readonly ValkeyClusterClient _cluster;
     private readonly object _sync = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _topologyGate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly HashSet<ValkeyShardedSubscription> _subscriptions = [];
     private int _operations;
@@ -99,7 +100,7 @@ public sealed class ValkeyClusterSubscriber : IAsyncDisposable
                     throw new ValkeyClusterException("Shard subscription topology-refresh attempts were exhausted.");
                 }
                 // Never follow endpoint text from a subscriber error. Reload validated discovery data.
-                await _cluster.RefreshTopologyAsync(token).ConfigureAwait(false);
+                await RefreshRoutesAsync(token).ConfigureAwait(false);
                 node = _cluster.GetSubscriptionNodeOptions(name);
                 asking = false;
             }
@@ -126,8 +127,22 @@ public sealed class ValkeyClusterSubscriber : IAsyncDisposable
         CancellationToken token
     )
     {
+        var recovery = _options.EnableTopologyRecovery
+            ? new ShardSubscriptionRecovery(
+                _options.Cluster.MaxRedirects,
+                async (source, redirect, recoveryToken) =>
+                {
+                    if (redirect is not null)
+                    {
+                        return (_cluster.GetSubscriptionRedirectOptions(redirect, name, source), true);
+                    }
+                    await RefreshRoutesAsync(recoveryToken).ConfigureAwait(false);
+                    return (_cluster.GetSubscriptionNodeOptions(name), false);
+                }
+            )
+            : null;
         var subscriber = await ValkeySubscriber
-            .ConnectClusterAsync(_options.CreateSubscriberOptions(node), asking, token)
+            .ConnectClusterAsync(_options.CreateSubscriberOptions(node), asking, recovery, token)
             .ConfigureAwait(false);
         var transferred = false;
         try
@@ -157,12 +172,35 @@ public sealed class ValkeyClusterSubscriber : IAsyncDisposable
         await RunAsync(
                 async token =>
                 {
-                    await _cluster.RefreshTopologyAsync(token).ConfigureAwait(false);
+                    await RefreshRoutesAsync(token).ConfigureAwait(false);
                     return true;
                 },
                 cancellationToken
             )
             .ConfigureAwait(false);
+    }
+
+    private async Task RefreshRoutesAsync(CancellationToken token)
+    {
+        // Independent of the lifecycle gate: unsubscribe may hold it while joining a recovery.
+        await _topologyGate.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            if (_options.EnableTopologyRecovery)
+            {
+                await _cluster
+                    .RefreshSubscriptionTopologyAsync(_options.MaxTopologyRefreshEndpoints, token)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                await _cluster.RefreshTopologyAsync(token).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _topologyGate.Release();
+        }
     }
 
     internal async Task ReleaseAsync(
@@ -346,10 +384,9 @@ public sealed class ValkeyClusterSubscriber : IAsyncDisposable
                     snapshot = _subscriptions.ToArray();
                     _subscriptions.Clear();
                 }
-                foreach (var handle in snapshot)
-                {
-                    await handle.Subscriber.DisposeAsync().ConfigureAwait(false);
-                }
+                // Signal every supervisor before joining any of them; discovery is shared and serialized.
+                await Task.WhenAll(snapshot.Select(handle => handle.Subscriber.DisposeAsync().AsTask()))
+                    .ConfigureAwait(false);
                 await _cluster.DisposeAsync().ConfigureAwait(false);
             }
             finally

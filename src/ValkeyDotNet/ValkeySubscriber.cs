@@ -30,6 +30,9 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
     private readonly ValkeySubscriberOptions _options;
     private readonly bool _clusterManaged;
     private readonly bool _asking;
+    private readonly ShardSubscriptionRecovery? _topologyRecovery;
+    private Exception? _topologyFailure;
+    private long _successfulRelocations;
     private Connection _connection;
     private readonly object _sync = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -50,12 +53,19 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
     private int _operations;
     private long _dropped;
 
-    private ValkeySubscriber(ValkeySubscriberOptions options, Connection connection, bool clusterManaged, bool asking)
+    private ValkeySubscriber(
+        ValkeySubscriberOptions options,
+        Connection connection,
+        bool clusterManaged,
+        bool asking,
+        ShardSubscriptionRecovery? topologyRecovery
+    )
     {
         _options = options;
         _connection = connection;
         _clusterManaged = clusterManaged;
         _asking = asking;
+        _topologyRecovery = topologyRecovery;
     }
 
     public ValkeyProtocol NegotiatedProtocol
@@ -113,25 +123,28 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
     public long ConnectionLosses => Interlocked.Read(ref _connectionLosses);
     public long ReconnectAttempts => Interlocked.Read(ref _reconnectAttempts);
     public long SuccessfulReconnects => Interlocked.Read(ref _successfulReconnects);
+    internal long SuccessfulRelocations => Interlocked.Read(ref _successfulRelocations);
 
     public static async Task<ValkeySubscriber> ConnectAsync(
         ValkeySubscriberOptions? options = null,
         CancellationToken cancellationToken = default
     )
     {
-        return await ConnectCoreAsync(options ?? new(), false, false, cancellationToken).ConfigureAwait(false);
+        return await ConnectCoreAsync(options ?? new(), false, false, null, cancellationToken).ConfigureAwait(false);
     }
 
     internal static Task<ValkeySubscriber> ConnectClusterAsync(
         ValkeySubscriberOptions options,
         bool asking,
+        ShardSubscriptionRecovery? topologyRecovery,
         CancellationToken cancellationToken
-    ) => ConnectCoreAsync(options, true, asking, cancellationToken);
+    ) => ConnectCoreAsync(options, true, asking, topologyRecovery, cancellationToken);
 
     private static async Task<ValkeySubscriber> ConnectCoreAsync(
         ValkeySubscriberOptions options,
         bool clusterManaged,
         bool asking,
+        ShardSubscriptionRecovery? topologyRecovery,
         CancellationToken cancellationToken
     )
     {
@@ -139,7 +152,7 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
         var connection = await Connection
             .OpenAsync(options.Connection, cancellationToken, asking)
             .ConfigureAwait(false);
-        var subscriber = new ValkeySubscriber(options, connection, clusterManaged, asking);
+        var subscriber = new ValkeySubscriber(options, connection, clusterManaged, asking, topologyRecovery);
         subscriber._readLoop = subscriber.ReadAsync();
         return subscriber;
     }
@@ -481,8 +494,11 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
                     ? new ValkeyConnectionException("The subscriber transport failed.", error)
                     : error;
                 if (
-                    (error is IOException or SocketException || error is ObjectDisposedException && IsReconnecting)
-                    && Disconnect(connection, failure)
+                    (
+                        error is IOException or SocketException
+                        || error is ObjectDisposedException && IsReconnecting
+                        || _topologyRecovery is not null && ReferenceEquals(error, _topologyFailure)
+                    ) && Disconnect(connection, failure)
                 )
                 {
                     if (await RecoverAsync().ConfigureAwait(false))
@@ -523,7 +539,7 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
                 {
                     if (
                         _clusterManaged
-                        && !restoring
+                        && (!restoring || _topologyRecovery is not null)
                         && rejected.Kind == "ssubscribe"
                         && frame.AsBytes().Span.StartsWith("ASK "u8)
                     )
@@ -577,9 +593,11 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
             {
                 throw new ValkeyProtocolException("Malformed unsolicited shard unsubscription.");
             }
-            throw new ValkeyClusterException(
+            var failure = new ValkeyClusterException(
                 "The server removed a shard subscription; refresh topology and subscribe again."
             );
+            _topologyFailure = failure;
+            throw failure;
         }
         if (kind is "subscribe" or "psubscribe" or "unsubscribe" or "punsubscribe" or "ssubscribe" or "sunsubscribe")
         {

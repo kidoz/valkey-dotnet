@@ -130,9 +130,9 @@ performed.
 `UseShardedPubSub=true` selects a separate SSUBSCRIBE/SUNSUBSCRIBE mode and enables
 `SubscribeShardedAsync`; global channels/patterns are rejected in that mode. It does not add node
 discovery. [The cluster subscriber](cluster-subscriber.md) provides slot routing on dedicated
-connections, with explicit limitations for topology changes. Tracking has its own
-[RESP3 client](client-tracking.md). Automatic subscription relocation and subscriber activity/Meter
-instrumentation remain absent. This is not full invalidation-readiness certification.
+connections and opt-in bounded topology recovery; node-level recovery stays on the selected endpoint.
+Tracking has its own [RESP3 client](client-tracking.md). Subscriber activity/Meter instrumentation
+remains absent. This is not full invalidation-readiness certification.
 
 ## Verification evidence
 

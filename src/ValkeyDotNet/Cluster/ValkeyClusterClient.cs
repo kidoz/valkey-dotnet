@@ -801,7 +801,8 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
         ClusterEndpoint source,
         ValkeyClusterOptions options,
         bool useTls,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool subscriptionRecovery = false
     )
     {
         RespValue response;
@@ -811,7 +812,7 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
                 .ExecuteAsync(new ValkeyCommand("CLUSTER", "SHARDS"), cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (ValkeyServerException)
+        catch (ValkeyServerException error) when (!subscriptionRecovery || error.ErrorCode == "ERR")
         {
             try
             {
@@ -821,6 +822,10 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
             }
             catch (ValkeyServerException exception)
             {
+                if (subscriptionRecovery)
+                {
+                    throw;
+                }
                 throw new ValkeyClusterException(
                     "The seed node rejected both CLUSTER SHARDS and CLUSTER SLOTS discovery.",
                     exception

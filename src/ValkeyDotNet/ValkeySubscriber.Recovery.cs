@@ -1,5 +1,6 @@
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using ValkeyDotNet.Cluster;
 using ValkeyDotNet.Protocol;
 
 namespace ValkeyDotNet;
@@ -56,6 +57,7 @@ public sealed partial class ValkeySubscriber
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
         deadline.CancelAfter(_options.RecoveryTimeout);
         var acquired = false;
+        var original = _connection.Options;
         try
         {
             // No replacement can be published while the old writer still owns the lifecycle gate.
@@ -77,27 +79,21 @@ public sealed partial class ValkeySubscriber
                 Interlocked.Increment(ref _reconnectAttempts);
                 try
                 {
-                    var replacement = await Connection
-                        .OpenAsync(_options.Connection, deadline.Token, _asking)
-                        .ConfigureAwait(false);
-                    try
+                    await RestoreConnectionAsync(deadline.Token).ConfigureAwait(false);
+                    var current = _connection.Options;
+                    if (
+                        original.Port != current.Port
+                        || !string.Equals(original.Host, current.Host, StringComparison.OrdinalIgnoreCase)
+                    )
                     {
-                        lock (_sync)
-                        {
-                            ThrowIfClosed();
-                            _connection = replacement;
-                            _confirmed.Clear();
-                        }
+                        Interlocked.Increment(ref _successfulRelocations);
                     }
-                    catch
-                    {
-                        replacement.Dispose();
-                        throw;
-                    }
-                    await RestoreAsync(deadline.Token).ConfigureAwait(false);
                     return true;
                 }
-                catch (Exception error) when (error is IOException or SocketException or TimeoutException)
+                catch (Exception error)
+                    when (error is IOException or SocketException or TimeoutException
+                        || _topologyRecovery is not null && error is ValkeyConnectionException
+                    )
                 {
                     _connection.Dispose();
                     lock (_sync)
@@ -132,6 +128,53 @@ public sealed partial class ValkeySubscriber
             }
         }
         return false;
+    }
+
+    private async Task RestoreConnectionAsync(CancellationToken token)
+    {
+        var route = (_options.Connection, _asking);
+        if (_topologyRecovery is not null)
+        {
+            route = await _topologyRecovery.ResolveAsync(_connection.Options, null, token).ConfigureAwait(false);
+        }
+        for (var redirectCount = 0; ; redirectCount++)
+        {
+            ShardSubscriptionRedirectException? redirect = null;
+            try
+            {
+                var replacement = await Connection.OpenAsync(route.Item1, token, route.Item2).ConfigureAwait(false);
+                try
+                {
+                    lock (_sync)
+                    {
+                        ThrowIfClosed();
+                        _connection = replacement;
+                        _confirmed.Clear();
+                    }
+                }
+                catch
+                {
+                    replacement.Dispose();
+                    throw;
+                }
+                await RestoreAsync(token).ConfigureAwait(false);
+                return;
+            }
+            catch (ShardSubscriptionRedirectException error) when (_topologyRecovery is not null)
+            {
+                redirect = error;
+            }
+            catch (ValkeyServerException error) when (_topologyRecovery is not null && error.ErrorCode == "MOVED")
+            {
+                // Only validated discovery, never the MOVED error's endpoint, changes the slot map.
+            }
+            _connection.Dispose();
+            if (redirectCount >= _topologyRecovery!.MaxRedirects)
+            {
+                throw new ValkeyClusterException("Shard subscription recovery redirects were exhausted.");
+            }
+            route = await _topologyRecovery.ResolveAsync(route.Item1, redirect, token).ConfigureAwait(false);
+        }
     }
 
     private async Task RestoreAsync(CancellationToken token)

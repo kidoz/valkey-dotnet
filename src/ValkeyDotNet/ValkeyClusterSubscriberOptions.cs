@@ -15,8 +15,14 @@ public sealed class ValkeyClusterSubscriberOptions
     /// <summary>Total admission, connection, topology-refresh, and acknowledgement budget per operation.</summary>
     public TimeSpan OperationTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
-    /// <summary>Restores on the same endpoint after transport loss; topology relocation is not automatic.</summary>
+    /// <summary>Restores on the same endpoint after transport loss unless topology recovery is enabled.</summary>
     public bool EnableReconnect { get; init; }
+
+    /// <summary>Refreshes routing after transport loss or server shard removal; implies EnableReconnect.</summary>
+    public bool EnableTopologyRecovery { get; init; }
+
+    /// <summary>Maximum distinct discovery endpoints tried per recovery refresh (1–32).</summary>
+    public int MaxTopologyRefreshEndpoints { get; init; } = 4;
     public int MaxReconnectAttempts { get; init; } = 3;
     public TimeSpan InitialReconnectDelay { get; init; } = TimeSpan.FromMilliseconds(100);
     public TimeSpan MaxReconnectDelay { get; init; } = TimeSpan.FromSeconds(2);
@@ -38,6 +44,10 @@ public sealed class ValkeyClusterSubscriberOptions
         {
             throw new ArgumentOutOfRangeException(nameof(MaxConcurrentOperations));
         }
+        if (MaxTopologyRefreshEndpoints is < 1 or > 32)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MaxTopologyRefreshEndpoints));
+        }
         CreateSubscriberOptions(seeds[0]).Validate();
     }
 
@@ -51,7 +61,7 @@ public sealed class ValkeyClusterSubscriberOptions
             QueueCapacity = QueueCapacity,
             MaxChannelBytes = MaxChannelBytes,
             OperationTimeout = OperationTimeout,
-            EnableReconnect = EnableReconnect,
+            EnableReconnect = EnableReconnect || EnableTopologyRecovery,
             MaxReconnectAttempts = MaxReconnectAttempts,
             InitialReconnectDelay = InitialReconnectDelay,
             MaxReconnectDelay = MaxReconnectDelay,

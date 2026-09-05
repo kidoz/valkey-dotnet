@@ -15,6 +15,7 @@ public sealed partial class ValkeySubscriber
         private Connection(TcpClient tcp, Stream stream, ValkeyClientOptions options)
         {
             _tcp = tcp;
+            Options = options;
             Stream = stream;
             Reader = new RespReader(
                 stream,
@@ -25,6 +26,7 @@ public sealed partial class ValkeySubscriber
         }
 
         internal Stream Stream { get; }
+        internal ValkeyClientOptions Options { get; }
         internal RespReader Reader { get; }
         internal ValkeyProtocol Protocol { get; private set; }
 

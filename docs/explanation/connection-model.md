@@ -137,8 +137,9 @@ Replica reads, cluster-wide scans, Sentinel discovery, and general-purpose pooli
 The dedicated subscriber treats disconnect as terminal by default, with opt-in bounded restoration
 of confirmed channel/pattern or shard subscriptions on the same endpoint. Tracking invalidations
 use a separate client. The cluster subscriber adds slot-routed sharded primitives with dedicated
-sockets, but automatic relocation during slot migration and its live recovery evidence remain work
-for a later state machine; current topology loss is an explicit failure. See the
+sockets and opt-in topology recovery through the existing subscriber reader and bounded queue.
+Validated server shard removal or transport loss can refresh discovery and relocate the stream;
+malformed frames remain terminal. Live migration/failover and soak evidence remain outstanding. See the
 [sharded Pub/Sub contract](../reference/cluster-subscriber.md).
 
 The generic command API means none of that blocks day-to-day use. Scripting via `EVAL` covers the

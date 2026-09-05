@@ -28,6 +28,13 @@ public sealed class ValkeyShardedSubscription : IAsyncDisposable
     public long DroppedMessages => Subscription.DroppedMessages;
     public long SuccessfulReconnects => Subscriber.SuccessfulReconnects;
 
+    /// <summary>Observed transport-loss or server shard-removal intervals; missed messages cannot be counted.</summary>
+    public long ConnectionLosses => Subscriber.ConnectionLosses;
+    public long ReconnectAttempts => Subscriber.ReconnectAttempts;
+
+    /// <summary>Successful recoveries to a different mapped host or port.</summary>
+    public long SuccessfulRelocations => Subscriber.SuccessfulRelocations;
+
     /// <summary>Reads binary shard deliveries away from the socket reader. Multiple readers compete.</summary>
     public IAsyncEnumerable<ValkeyPubSubMessage> ReadAllAsync(CancellationToken cancellationToken = default) =>
         Subscription.ReadAllAsync(cancellationToken);
