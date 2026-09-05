@@ -11,16 +11,30 @@ public sealed partial class ValkeyClusterIntegrationTests
     [InlineData(ValkeyProtocol.Resp3)]
     public async Task OwnedNonemptyMigrationPreservesBinaryKeysExpiryAndShardStream(ValkeyProtocol protocol)
     {
-        if (Environment.GetEnvironmentVariable("VALKEYDOTNET_RUN_KEY_TRANSFER_TESTS") != "1")
+        await VerifyOwnedKeyMigrationAsync(protocol, atomic: false);
+    }
+
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
+    public async Task OwnedAtomicMigrationPreservesBinaryKeysExpiryAndShardStream(ValkeyProtocol protocol)
+    {
+        await VerifyOwnedKeyMigrationAsync(protocol, atomic: true);
+    }
+
+    private static async Task VerifyOwnedKeyMigrationAsync(ValkeyProtocol protocol, bool atomic)
+    {
+        var flag = atomic ? "VALKEYDOTNET_RUN_ATOMIC_MIGRATION_TESTS" : "VALKEYDOTNET_RUN_KEY_TRANSFER_TESTS";
+        if (Environment.GetEnvironmentVariable(flag) != "1")
         {
-            Assert.Skip("Set VALKEYDOTNET_RUN_KEY_TRANSFER_TESTS=1 to transfer keys in a fresh owned Docker cluster.");
+            Assert.Skip($"Set {flag}=1 to migrate keys in a fresh owned Docker cluster.");
         }
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromMinutes(5));
         var token = deadline.Token;
         await using var cluster = new MigrationValkeyCluster();
         TestContext.Current.TestOutputHelper?.WriteLine(
-            $"Owned key-transfer project: {cluster.Project}; protocol={protocol}"
+            $"Owned key-migration project: {cluster.Project}; protocol={protocol}; atomic={atomic}"
         );
         await cluster.StartNewAsync(token);
         var version = (await cluster.CommandAsync(0, ["INFO", "SERVER"], token))
@@ -96,77 +110,85 @@ public sealed partial class ValkeyClusterIntegrationTests
         await VerifyDeliveryAsync(commands, channel, messages, 0, token);
         await VerifyDeliveryAsync(commands, stationary, stationaryMessages, 0, token);
 
-        await cluster.BeginSlotMigrationAsync(slot, 0, 1, 2, token);
-        await cluster.MigrateOwnedKeyAsync(expiringKey, 0, 1, 2, protocol, token);
         var number = slot.ToString(CultureInfo.InvariantCulture);
-        var remaining = (
-            await source.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "2"), token)
-        ).AsArray();
-        Assert.Equal(persistentKey, Assert.Single(remaining).AsBytes().ToArray());
-        var transferred = (
-            await target.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "2"), token)
-        ).AsArray();
-        Assert.Equal(expiringKey, Assert.Single(transferred).AsBytes().ToArray());
-        Assert.Equal(
-            "ASK",
-            (
-                await Assert.ThrowsAsync<ValkeyServerException>(() =>
-                    source.ExecuteAsync(new ValkeyCommand("GET", expiringKey), token)
-                )
-            ).ErrorCode
-        );
-        var mixed = await Assert.ThrowsAsync<ValkeyServerException>(() =>
-            commands.ExecuteAsync(expiringKey, new ValkeyCommand("MGET", expiringKey, persistentKey), token)
-        );
-        Assert.Equal("TRYAGAIN", mixed.ErrorCode);
-        Assert.Equal("PONG", await commands.PingAsync(token));
-        await VerifyTransferredValuesAsync(
-            commands,
-            expiringKey,
-            expiringValue,
-            persistentKey,
-            persistentValue,
-            originalExpiry,
-            token
-        );
-        await VerifyDeliveryAsync(commands, channel, messages, 1, token);
-        Assert.Equal(0, handle.ConnectionLosses);
-        await VerifySlotOwnerAsync(cluster, slot, 0, protocol, token);
+        if (atomic)
+        {
+            await VerifySlotOwnerAsync(cluster, slot, 0, protocol, token);
+            await cluster.RunAtomicSlotMigrationAsync(slot, 0, 1, protocol, token);
+        }
+        else
+        {
+            await cluster.BeginSlotMigrationAsync(slot, 0, 1, 2, token);
+            await cluster.MigrateOwnedKeyAsync(expiringKey, 0, 1, 2, protocol, token);
+            var remaining = (
+                await source.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "2"), token)
+            ).AsArray();
+            Assert.Equal(persistentKey, Assert.Single(remaining).AsBytes().ToArray());
+            var transferred = (
+                await target.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "2"), token)
+            ).AsArray();
+            Assert.Equal(expiringKey, Assert.Single(transferred).AsBytes().ToArray());
+            Assert.Equal(
+                "ASK",
+                (
+                    await Assert.ThrowsAsync<ValkeyServerException>(() =>
+                        source.ExecuteAsync(new ValkeyCommand("GET", expiringKey), token)
+                    )
+                ).ErrorCode
+            );
+            var mixed = await Assert.ThrowsAsync<ValkeyServerException>(() =>
+                commands.ExecuteAsync(expiringKey, new ValkeyCommand("MGET", expiringKey, persistentKey), token)
+            );
+            Assert.Equal("TRYAGAIN", mixed.ErrorCode);
+            Assert.Equal("PONG", await commands.PingAsync(token));
+            await VerifyTransferredValuesAsync(
+                commands,
+                expiringKey,
+                expiringValue,
+                persistentKey,
+                persistentValue,
+                originalExpiry,
+                token
+            );
+            await VerifyDeliveryAsync(commands, channel, messages, 1, token);
+            Assert.Equal(0, handle.ConnectionLosses);
+            await VerifySlotOwnerAsync(cluster, slot, 0, protocol, token);
 
-        await cluster.MigrateOwnedKeyAsync(persistentKey, 0, 1, 1, protocol, token);
-        Assert.Empty(
-            (await source.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "2"), token)).AsArray()
-        );
-        Assert.Equal(
-            2,
-            (await target.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "2"), token))
-                .AsArray()
-                .Count
-        );
-        await VerifyTransferredValuesAsync(
-            commands,
-            expiringKey,
-            expiringValue,
-            persistentKey,
-            persistentValue,
-            originalExpiry,
-            token
-        );
-        await VerifyDeliveryAsync(commands, channel, messages, 2, token);
-        Assert.Equal(0, handle.ConnectionLosses);
-        Assert.Equal(
-            1,
-            (await source.ExecuteAsync(new ValkeyCommand("PUBSUB", "SHARDNUMSUB", channel), token))
-                .AsArray()[1]
-                .AsInt64()
-        );
-        Assert.Equal(
-            0,
-            (await target.ExecuteAsync(new ValkeyCommand("PUBSUB", "SHARDNUMSUB", channel), token))
-                .AsArray()[1]
-                .AsInt64()
-        );
-        await cluster.CompleteSlotMigrationAsync(slot, 0, 1, 2, token);
+            await cluster.MigrateOwnedKeyAsync(persistentKey, 0, 1, 1, protocol, token);
+            Assert.Empty(
+                (await source.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "2"), token)).AsArray()
+            );
+            Assert.Equal(
+                2,
+                (await target.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "2"), token))
+                    .AsArray()
+                    .Count
+            );
+            await VerifyTransferredValuesAsync(
+                commands,
+                expiringKey,
+                expiringValue,
+                persistentKey,
+                persistentValue,
+                originalExpiry,
+                token
+            );
+            await VerifyDeliveryAsync(commands, channel, messages, 2, token);
+            Assert.Equal(0, handle.ConnectionLosses);
+            Assert.Equal(
+                1,
+                (await source.ExecuteAsync(new ValkeyCommand("PUBSUB", "SHARDNUMSUB", channel), token))
+                    .AsArray()[1]
+                    .AsInt64()
+            );
+            Assert.Equal(
+                0,
+                (await target.ExecuteAsync(new ValkeyCommand("PUBSUB", "SHARDNUMSUB", channel), token))
+                    .AsArray()[1]
+                    .AsInt64()
+            );
+            await cluster.CompleteSlotMigrationAsync(slot, 0, 1, 2, token);
+        }
         using var recovery = CancellationTokenSource.CreateLinkedTokenSource(token);
         recovery.CancelAfter(TimeSpan.FromSeconds(35));
         while (handle.SuccessfulRelocations < 1 || !handle.IsConnected)
@@ -176,6 +198,15 @@ public sealed partial class ValkeyClusterIntegrationTests
             await Task.Delay(20, recovery.Token);
         }
         await VerifySlotOwnerAsync(cluster, slot, 1, protocol, token);
+        Assert.Empty(
+            (await source.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "2"), token)).AsArray()
+        );
+        var finalKeys = (
+            await target.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "3"), token)
+        ).AsArray();
+        Assert.Equal(2, finalKeys.Count);
+        Assert.Contains(finalKeys, key => key.AsBytes().Span.SequenceEqual(expiringKey));
+        Assert.Contains(finalKeys, key => key.AsBytes().Span.SequenceEqual(persistentKey));
         await VerifyTransferredValuesAsync(
             commands,
             expiringKey,
@@ -208,8 +239,12 @@ public sealed partial class ValkeyClusterIntegrationTests
                 .AsInt64()
         );
         var finalExpiry = (await target.ExecuteAsync(new ValkeyCommand("PEXPIRETIME", expiringKey), token)).AsInt64();
+        if (atomic)
+        {
+            Assert.Equal(originalExpiry, finalExpiry);
+        }
         TestContext.Current.TestOutputHelper?.WriteLine(
-            $"slot={slot}; transferred_keys=2; expiry_shift_ms={finalExpiry - originalExpiry}; mixed_reply=TRYAGAIN; relocations={handle.SuccessfulRelocations}; attempts={handle.ReconnectAttempts}; dropped={handle.DroppedMessages}"
+            $"slot={slot}; transferred_keys=2; expiry_shift_ms={finalExpiry - originalExpiry}; atomic={atomic}; relocations={handle.SuccessfulRelocations}; attempts={handle.ReconnectAttempts}; dropped={handle.DroppedMessages}"
         );
         Assert.Equal(
             2,

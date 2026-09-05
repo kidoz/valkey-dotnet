@@ -17,6 +17,9 @@
 
 ### Added
 
+- Opt-in atomic slot-migration runner and manual workflow checking correlated EXPORT/IMPORT job
+  completion, binary keys and absolute expiration, and same-stream sharded relocation in RESP2/RESP3.
+
 - Opt-in nonempty-key migration runner and manual workflow verifying binary MIGRATE transfers,
   expiration metadata, intermediate ASK/TRYAGAIN behavior, and same-stream sharded cutover.
 

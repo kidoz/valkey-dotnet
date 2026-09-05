@@ -4,6 +4,117 @@ namespace ValkeyDotNet.IntegrationTests.TestInfrastructure;
 public sealed class MigrationValkeyClusterTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RefusesAtomicMigrationBeforeOwnedClusterInitialization(bool includeReplica)
+    {
+        await using var cluster = new MigrationValkeyCluster(includeReplica);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cluster.RunAtomicSlotMigrationAsync(0, 0, 1, ValkeyProtocol.Resp3, TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Theory]
+    [InlineData(-1, 0, 1)]
+    [InlineData(16384, 0, 1)]
+    [InlineData(0, -1, 1)]
+    [InlineData(0, 0, 3)]
+    [InlineData(0, 1, 1)]
+    public async Task RefusesAtomicMigrationOutsideOwnedSlotAndNodes(int slot, int source, int target)
+    {
+        await using var cluster = new MigrationValkeyCluster();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            cluster.RunAtomicSlotMigrationAsync(
+                slot,
+                source,
+                target,
+                ValkeyProtocol.Resp2,
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Theory]
+    [InlineData("success", true)]
+    [InlineData("snapshot", false)]
+    public void AtomicJobRequiresSuccessfulTerminalState(string state, bool success)
+    {
+        var fields = AtomicJobFields();
+        fields["state"] = state;
+        Assert.Equal(
+            success,
+            MigrationValkeyCluster.ValidateAtomicJob(
+                fields,
+                "EXPORT",
+                42,
+                new string('b', 40),
+                new string('c', 40),
+                null
+            )
+        );
+    }
+
+    [Theory]
+    [InlineData("name", "invalid")]
+    [InlineData("operation", "IMPORT")]
+    [InlineData("source_node", "unexpected")]
+    [InlineData("target_node", "unexpected")]
+    [InlineData("slot_ranges", "42-43")]
+    [InlineData("slot_ranges", "42-42 44-44")]
+    [InlineData("state", "failed")]
+    [InlineData("state", "cancelled")]
+    [InlineData("state", "")]
+    [InlineData("state", null)]
+    public void AtomicJobRejectsUnexpectedIdentityOrFailedState(string field, string? value)
+    {
+        var fields = AtomicJobFields();
+        if (value is null)
+        {
+            fields.Remove(field);
+        }
+        else
+        {
+            fields[field] = value;
+        }
+        Assert.Throws<InvalidOperationException>(() =>
+            MigrationValkeyCluster.ValidateAtomicJob(
+                fields,
+                "EXPORT",
+                42,
+                new string('b', 40),
+                new string('c', 40),
+                null
+            )
+        );
+    }
+
+    [Fact]
+    public void AtomicJobCannotChangeIdentityDuringPolling()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            MigrationValkeyCluster.ValidateAtomicJob(
+                AtomicJobFields(),
+                "EXPORT",
+                42,
+                new string('b', 40),
+                new string('c', 40),
+                new string('d', 40)
+            )
+        );
+    }
+
+    private static Dictionary<string, string> AtomicJobFields() =>
+        new(StringComparer.Ordinal)
+        {
+            ["name"] = new string('a', 40),
+            ["operation"] = "EXPORT",
+            ["slot_ranges"] = "42-42",
+            ["source_node"] = new string('b', 40),
+            ["target_node"] = new string('c', 40),
+            ["state"] = "success",
+        };
+
+    [Theory]
     [InlineData(-1)]
     [InlineData(3)]
     public async Task RefusesCutoverWithUnexpectedTargetKeyBudget(int expectedTargetKeys)

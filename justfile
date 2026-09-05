@@ -55,6 +55,13 @@ test-migration $migration_cycles="3":
     -method '*OwnedSlotMigrationPreservesShardedHandleAndStream' \
     -showLiveOutput -result-trx artifacts/resilience/migration.trx
 
+# Atomically move one owned slot and verify job completion, binary data, expiry, and sharded delivery.
+test-atomic-migration:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_ATOMIC_MIGRATION_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedAtomicMigrationPreservesBinaryKeysExpiryAndShardStream' \
+    -showLiveOutput -result-trx artifacts/resilience/atomic-migration.trx
+
 # Transfer two owned binary keys and verify expiry and sharded delivery through cutover.
 test-key-transfer:
     mkdir -p artifacts/resilience
