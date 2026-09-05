@@ -394,6 +394,13 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
             await connection.Stream.FlushAsync(timeout.Token).ConfigureAwait(false);
             await pending.Completion.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
         }
+        catch (Exception) when (pending.Completion.Task.IsCompleted)
+        {
+            // The reader can process a reply and then close/cancel the socket before this writer
+            // resumes. Preserve that settled outcome, including a sanitized server rejection,
+            // instead of replacing it with the later flush failure or shutdown cancellation.
+            await pending.Completion.Task.ConfigureAwait(false);
+        }
         catch (OperationCanceledException)
         {
             lock (_sync)

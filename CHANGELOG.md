@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve completed subscriber acknowledgements and sanitized server rejections when an immediate
+  remote close races with the lifecycle caller. Confirmed handles retain buffered messages; closing
+  before acknowledgement still fails the operation.
+
 ### Added
 
 - RESP2/RESP3 sharded subscriber mode and a bounded cluster subscriber with dedicated slot-routed

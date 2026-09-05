@@ -82,7 +82,11 @@ subscriber queue or acknowledgement settings.
   connection. Protocol errors and parser-bound violations remain terminal even with recovery enabled.
   Buffered deliveries can drain before streams report a terminal error. Subsequent new operations
   reject as disposed.
-- Cancellation can race with acknowledgement; cancellation may win even when the server applied
+- A reply already processed by the reader remains authoritative if shutdown cancellation or a
+  write/flush failure races with the waiting caller. A confirmed subscribe returns its handle even
+  if the connection has since closed; buffered messages drain before the stream reports that loss.
+  A confirmed unsubscribe succeeds, and a server rejection retains its sanitized error category.
+- Cancellation can still win before the reader settles the reply, even when the server applied
   the change. Closing the connection removes its server subscriptions.
 
 ## Optional recovery
@@ -128,6 +132,21 @@ connections, with explicit limitations for topology changes. Tracking has its ow
 instrumentation remain absent. This is not full invalidation-readiness certification.
 
 ## Verification evidence
+
+On 2026-09-05, immediate-close regression tests reproduced a processed NOPERM rejection being replaced
+by a later connection error. Lifecycle completion now preserves the reader's settled outcome.
+All 352 server-free tests passed after the fix, with zero-warning Debug and Release builds and a
+passing formatting check. The 24 new RESP2/RESP3 channel, pattern, and shard cases also passed ten
+consecutive focused runs. These bounded loopback repetitions cover subscribe/unsubscribe replies,
+sanitized rejection, buffered empty messages, and close before acknowledgement; they are not
+live-cluster or prolonged-soak evidence.
+
+A later verification session on the same date reproduced immediate-close failures again: the
+352-case unit suite failed 2 cases, then 4 after a solution rebuild, then 1 after recompiling the
+library without shared compilation. The last failure replaced a shard-mode RESP3 NOPERM rejection
+with a connection error. The acknowledgement-race fix is therefore not considered fully verified;
+the earlier passing repetitions do not close this issue. The latest local result is
+`artifacts/resilience/sharded-mto9sn1m/unit-fresh-compiler.trx`.
 
 On 2026-09-05, the local macOS arm64 build completed without warnings and all 250 server-free tests
 passed, including 28 subscriber cases. Subscriber coverage includes RESP2/RESP3, byte-fragmented
