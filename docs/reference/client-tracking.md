@@ -83,8 +83,39 @@ null/empty invalidations, malformed frames, bounded overflow, replacement with T
 settings, replacement parser bounds, isolated deadlines, cancellation, disposal, and reader ownership.
 Live tests are gated by `VALKEYDOTNET_ENDPOINT`; the exact-ID connection-kill case additionally
 requires `VALKEYDOTNET_RUN_TRACKING_RECOVERY_TESTS=1` and an isolated disposable endpoint.
-The new live cases have not been executed as part of this change. Server-restart, live TLS, cluster
-tracking, and prolonged resource-soak evidence are not established.
+The live cases passed locally on 2026-09-05 after explicit confirmation of disposable targets.
+Server-restart, live TLS, cluster tracking, and prolonged resource-soak evidence are not established.
+
+### Live tracking matrix — 2026-09-05
+
+| Valkey | Protocol | Passed cases | Successful connection-loss restorations |
+|---|---|---|---|
+| 9.1.2 | RESP3 | 4 | 3 |
+| 8.1.10 | RESP3 | 4 | 3 |
+| 7.2.14 | RESP3 | 4 | 3 |
+
+All twelve cases passed without failures or skips. Each version exercised default and BCAST/PREFIX
+binary invalidation delivery, NOLOOP suppression of the tracked connection's own writes, and three
+exact-ID connection kills. The recovery case obtained its own client ID before injection, then
+verified invalidate-all notification, a changed ID on replacement, restored prefix delivery, zero
+queue overflows, and an unaffected writer connection. Recovery remained on demand; neither commands
+nor retry policy were changed for this run. This is connection-loss evidence, not a server restart.
+
+Each server was a fresh ownership-labelled local Docker container using a frozen cached image ID,
+a loopback-only dynamic port, a 128 MiB memory limit, one CPU, a 16 MiB data tmpfs, and disabled
+persistence. Container identity, label, image, running state, resource limits, and loopback mapping
+were checked before enabling faults. Cases ran sequentially under a two-minute per-version process
+limit, with 15-second basic-case and 30-second recovery-case deadlines. Execution stopped on failure;
+cleanup revalidated ownership before removal.
+
+The host was macOS arm64 with SDK 10.0.400 and runtime .NET 10.0.11; servers ran Linux aarch64 without
+TLS. Each server reported zero remaining keys before removal. All three owned containers were
+removed, and the two pre-existing stopped containers were unchanged. No persistent test data remains.
+
+TRX records and frozen image/container metadata are retained locally under
+`artifacts/resilience/tracking-mto7mx47/`. Runner durations were 0.339, 0.375, and 0.370 seconds for
+9.1, 8.1, and 7.2 respectively; these are test durations, not performance measurements. The runner
+accepted `-parallel none` with a deprecation notice; its replacement is `-parallelMode none`.
 
 Wire semantics follow the official [CLIENT TRACKING command](https://valkey.io/commands/client-tracking/)
 and [client-side caching specification](https://valkey.io/topics/client-side-caching/).

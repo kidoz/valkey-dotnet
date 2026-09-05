@@ -38,5 +38,13 @@ DNS-resolution faults, abrupt primary failover, partitions, prolonged soak, and 
 server-restart restoration still need dedicated evidence. No transport retry policy was changed
 to make these experiments pass.
 
+Standalone RESP3 tracking also passed its live matrix on 2026-09-05: twelve cases across Valkey
+9.1.2, 8.1.10, and 7.2.14, including nine exact-ID connection kills and successful on-demand tracking
+restorations. Binary default/broadcast invalidations, NOLOOP, loss resets, replacement IDs, restored
+prefix delivery, zero queue overflows, and writer isolation were verified. All three fresh owned
+containers were removed with zero keys remaining; existing containers were unchanged. See the
+[tracking evidence and limits](client-tracking.md#live-tracking-matrix--2026-09-05).
+Tracking server restart, partitions, live TLS, and prolonged soak remain unverified.
+
 See [Run isolated restart tests](../how-to/run-resilience-tests.md) for the experiment's safety and
 cleanup contract.
