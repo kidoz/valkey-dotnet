@@ -86,6 +86,9 @@ subscriber queue or acknowledgement settings.
   write/flush failure races with the waiting caller. A confirmed subscribe returns its handle even
   if the connection has since closed; buffered messages drain before the stream reports that loss.
   A confirmed unsubscribe succeeds, and a server rejection retains its sanitized error category.
+- The acknowledgement wait observes caller cancellation and its operation deadline, not reader
+  shutdown cancellation. Shutdown settles an unacknowledged change through its pending completion
+  and disposes the socket to interrupt outstanding I/O. Admission waiters still observe shutdown.
 - Cancellation can still win before the reader settles the reply, even when the server applied
   the change. Closing the connection removes its server subscriptions.
 
@@ -147,6 +150,17 @@ library without shared compilation. The last failure replaced a shard-mode RESP3
 with a connection error. The acknowledgement-race fix is therefore not considered fully verified;
 the earlier passing repetitions do not close this issue. The latest local result is
 `artifacts/resilience/sharded-mto9sn1m/unit-fresh-compiler.trx`.
+
+The shutdown-isolation follow-up removes reader shutdown from the lifecycle acknowledgement wait's
+linked cancellation source. The existing settled-result guard remains for write/flush races.
+Eighteen additional RESP2/RESP3 channel, pattern, and shard cases verify unacknowledged disposal,
+caller cancellation, and deadline expiry. Disposal is bounded by a five-second test watchdog with a
+one-minute operation deadline, proving it does not rely on that deadline to release the caller.
+All 370 cases passed `just ci`, five subsequent full Debug runs, and the Release suite. Twenty
+additional focused runs of the 24 immediate-close cases also passed. Debug/Release builds and
+formatting completed without warnings or failures. These results supersede the
+earlier open regression assessment for this change; they are bounded local evidence, not a soak or
+live-server certification. Results are in `artifacts/resilience/ack-shutdown-isolation/`.
 
 On 2026-09-05, the local macOS arm64 build completed without warnings and all 250 server-free tests
 passed, including 28 subscriber cases. Subscriber coverage includes RESP2/RESP3, byte-fragmented

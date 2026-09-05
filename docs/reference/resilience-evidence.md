@@ -51,7 +51,8 @@ Valkey 9.1.2 cluster. Binary delivery across all three slot ranges, independent 
 final unsubscription, zero drops, and publisher isolation passed. Ownership-checked cleanup removed
 only the three test containers and their network. This was a routing/lifecycle check, not a fault
 experiment. Concurrent verification work also reproduced intermittent subscriber acknowledgement/
-remote-close unit failures; overall suite readiness remains open. See the
+remote-close unit failures. A later shutdown-isolation change passed 370 unit cases and five
+additional full Debug runs; this does not extend the live test's scope. See the
 [sharded verification scope](cluster-subscriber.md#verification-scope).
 
 See [Run isolated restart tests](../how-to/run-resilience-tests.md) for the experiment's safety and

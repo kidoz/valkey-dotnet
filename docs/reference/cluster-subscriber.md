@@ -101,6 +101,7 @@ removed after ownership-label checks; existing containers were untouched. The lo
 `artifacts/resilience/sharded-mto9sn1m/sharded.trx`.
 
 This live success is separate from overall unit-suite readiness: immediate-close acknowledgement
-and rejection regressions still failed intermittently during the same verification session. See
+and rejection regressions failed intermittently during that verification session. A subsequent
+shutdown-isolation change passed the expanded unit suite and repeated runs. See
 [subscriber verification evidence](subscriber.md#verification-evidence).
 Live failover, slot migration, TLS recovery, prolonged soak, and performance evidence remain separate work.

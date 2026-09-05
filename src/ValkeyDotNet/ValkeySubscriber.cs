@@ -374,7 +374,11 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
         CancellationToken cancellationToken
     )
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
+        // Close/Disconnect settle the pending reply before retiring the socket. Do not also race
+        // that authoritative outcome against the reader's shutdown token in WaitAsync: shutdown
+        // can follow a valid ACK immediately. Caller cancellation and the operation deadline remain
+        // independent; socket disposal interrupts an outstanding write on terminal shutdown.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(Remaining(started, cancellationToken));
         var pending = new Pending(kind, registration, confirm);
         Connection connection;

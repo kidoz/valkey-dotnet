@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Separate subscriber acknowledgement deadlines/caller cancellation from reader shutdown. Pending
+  completions report terminal loss or disposal; socket disposal still interrupts outstanding I/O.
+  Add cross-mode disposal, cancellation, and deadline regression coverage.
 - Preserve completed subscriber acknowledgements and sanitized server rejections when an immediate
   remote close races with the lifecycle caller. Confirmed handles retain buffered messages; closing
   before acknowledgement still fails the operation.
