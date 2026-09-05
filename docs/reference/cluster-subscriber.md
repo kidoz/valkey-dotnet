@@ -142,6 +142,14 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [cutover writer runner](../how-to/run-cutover-writes-tests.md) passed RESP2/RESP3 on Valkey 9.1.2
+on 2026-09-06. Two exact writer connections were observed blocked during migration write pause;
+their updates were acknowledged after handoff, with binary values and original expiration retained.
+Paired updates before and after the queued phase also passed. The original sharded stream relocated
+once with zero drops; the stationary stream had no loss or drops. This is bounded healthy cutover,
+not sustained contention, simultaneous transport failure, or uninterrupted publishing. See the
+[execution record](resilience-evidence.md#atomic-cutover-queued-writes--2026-09-06).
+
 The [atomic writer runner](../how-to/run-atomic-writes-tests.md) passed RESP2/RESP3 on Valkey 9.1.2
 on 2026-09-05. Two logical writers acknowledged 64 updates after snapshot import and before write
 pause; the destination retained final binary values and exact expiration after successful cutover.

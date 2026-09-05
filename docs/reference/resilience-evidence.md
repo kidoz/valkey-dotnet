@@ -3,6 +3,57 @@
 This page separates implemented experiments from executed evidence. It is not a cache/lock
 production-readiness certification.
 
+## Atomic cutover queued writes — 2026-09-06
+
+`just test-cutover-writes` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 30.449 seconds, with no
+failures or skips. Each used three fresh owned primaries with 128 MiB/one CPU limits, temporary
+storage, and DEBUG=local. The Release client ran on macOS arm64 with SDK 10.0.400/.NET 10.0.11;
+servers ran Linux aarch64 without TLS. See the [run guide](../how-to/run-cutover-writes-tests.md).
+
+Two independent routed clients updated a 4 KiB expiring and a five-byte persistent binary string
+before write pause, while queued across cutover, and after cutover. Each phase acknowledged both
+SET XX KEEPTTL updates, with values checked before the next phase could mask a lost update.
+All six updates per protocol were acknowledged; no ambiguous result or application replay occurred.
+Original absolute expiration remained exact, positive TTL and persistence survived, and final
+placement was target-only with all slot maps naming the target.
+
+The test first observed a held post-snapshot export and both provisional keys, then used the
+importer's local PREVENT-FAILOVER hook to hold ownership handoff. Source INFO confirmed migration
+write pause; the correlated export reached `failover-granted` while its import stayed active.
+Before release, read-only CLIENT LIST ID identified both exact original writer IDs with the owned
+name, SET command, and blocked flags; both operations were still pending. This establishes actual
+queued writes across handoff, not a timing-based assumption that writers overlapped migration.
+The controlled stage follows the [upstream queued-client migration test](https://github.com/valkey-io/valkey/blob/9.1.2/tests/unit/cluster/cluster-migrateslots.tcl#L1273-L1316).
+
+After release, both pending writes returned OK and both correlated migration jobs succeeded.
+Original sharded handle/completion/enumerator delivery survived one relocation and one recovery
+attempt with zero drops; the stationary stream had no connection loss or drops. Outcome recording
+distinguishes acknowledged, not-sent, ambiguous, received-error, unexpected, and unclassified
+cancellation results; typed cancellation keeps its ambiguity. Any non-acknowledged result fails the
+healthy test. No transport replay or retry policy was added.
+
+Pause observation, queued writes, release, and immediate value verification share five seconds;
+the server's checked 5000 ms manual-failover setting is not extended. Shared migration work has
+45 seconds after preflight. Independent ten-second finally blocks clear both hooks, and failed
+write scopes cancel and drain both operations. Exact-ID observations are capped at 16 KiB and
+reject duplicate/foreign identities and malformed fields. Teardown verified zero keys, shard
+channels, and named clients, then removed all six owned containers/two networks. Evidence:
+`artifacts/resilience/cutover-writes.trx`. The manual workflow was added, not dispatched; no shipping
+API/dependency/parser/retry changes were needed.
+
+All 442 unit tests and 181 harness checks passed in Debug/Release, and the new live cases skipped
+without opt-in. Six repeat/shared cutover-writer, post-snapshot-writer, and rollback cases passed
+in 86.174 seconds, with zero expiry shifts and drops. Evidence:
+`artifacts/resilience/migration-after-cutover-writes.trx`. Across both live runs, twenty-four owned
+containers/eight networks were removed; exact pre-existing Docker inventory remained and hostloom
+services stayed healthy. Initial build attempts encountered MSBuild worker crashes; a single-worker
+build with build servers disabled passed, followed by `just ci` with node reuse/build-server reuse
+disabled. No warning suppression, project-setting change, staging, or commit was made.
+
+This is a bounded healthy handoff with two distinct-key queued writes. It does not establish
+sustained or same-key contention, simultaneous transport failure, ambiguous-result reconciliation,
+uninterrupted publishing, short-lease correctness, performance, TLS, or other server versions.
+
 ## Atomic migration post-snapshot writes — 2026-09-05
 
 `just test-atomic-writes` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 25.657 seconds, with no
