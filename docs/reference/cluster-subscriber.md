@@ -142,6 +142,14 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [bounded resubscribe soak](../how-to/run-resubscribe-soak-tests.md) passed RESP2/RESP3 on
+Valkey 9.1.2 on 2026-09-05: four warm-up plus 30 measured relocations per protocol, unchanged
+streams, one reconnect attempt per relocation, zero local drops, exact settled server connection
+and registration counts, and bounded post-GC heap. All six owned containers/two networks were
+removed. This is a short sequential run, not prolonged soak, peak-socket/task-count evidence,
+or TLS/storm certification; macOS handle counts were unsupported. See the
+[resource measurements](resilience-evidence.md#bounded-resubscribe-soak--2026-09-05).
+
 The [MIGRATE reply-loss runner](../how-to/run-migrate-reply-loss-tests.md) passed RESP2/RESP3 on
 Valkey 9.1.2 on 2026-09-05. A successful transfer's reply was withheld, the caller reported delivery
 ambiguity, and independent reads reconciled key placement without replay. Sharded delivery stayed

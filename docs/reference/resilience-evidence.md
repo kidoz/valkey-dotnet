@@ -3,6 +3,57 @@
 This page separates implemented experiments from executed evidence. It is not a cache/lock
 production-readiness certification.
 
+## Bounded resubscribe soak — 2026-09-05
+
+`just test-resubscribe-soak` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 182.409 seconds,
+with no failures or skips. Each fresh three-primary cluster performed four warm-up and 30 measured
+legacy empty-slot relocations: 68 successful relocations total. The client ran Release on Apple
+M4 Max, macOS 26.6.2 arm64, SDK 10.0.400, and .NET 10.0.11; servers ran Linux aarch64 without TLS,
+each limited to 128 MiB and one CPU. This was one sequential run, not a before/after benchmark.
+
+Each cycle retained both original handles, completion tasks, and enumerators; delivered an exact
+eight-byte binary sequence payload on each channel after recovery; and had zero local queue drops.
+Every relocation required one reconnect attempt. The stationary channel reported no loss or attempt.
+Settled per-node client counts matched the current slot owner on every cycle: nine named sockets
+total, including three test inspectors, three publisher connections, the discovery seed, and two
+subscription sockets. SHARDNUMSUB reported exactly two owner-local registrations total.
+Final unsubscription reached EOF on both streams without extra buffered messages.
+
+Resource samples include the fourth warm-up baseline and 30 measured cycles. All values below
+are process-wide, including xUnit/output retention and Docker subprocess orchestration.
+
+| Measurement | RESP2 | RESP3 |
+|---|---:|---:|
+| Relocation loop, including warm-up | 80.928 s | 82.575 s |
+| Baseline post-GC heap | 2,782,592 bytes | 2,714,512 bytes |
+| Maximum sampled post-GC heap | 2,782,592 bytes | 2,714,512 bytes |
+| Final post-GC heap | 2,551,432 bytes | 2,714,248 bytes |
+| Sampled working-set range | 107,642,880–122,585,088 bytes | 123,109,376–124,731,392 bytes |
+| Sampled thread-pool threads | 6 | 6–7 |
+| Maximum sampled queued work | 0 | 0 |
+
+Both cases stayed within the 16 MiB post-GC growth smoke budget. macOS returned zero for process
+handles, recorded as unsupported; the conditional +32 handle gate therefore supplies no local
+handle-growth evidence. Working set increased and has no pass threshold. Queued work is not the
+number of live tasks. Sampling follows recovery settlement, so transient connection peaks are not
+measured. Full GC perturbs the workload, and these short runs do not exclude slow leaks.
+
+Normal teardown verified zero keys, shard channels, and named application clients on every node,
+then removed all six owned containers and two networks. The before/after Docker inventory retained
+all existing containers and networks; the three existing hostloom services remained healthy.
+Local evidence: `artifacts/resilience/resubscribe-soak.trx`. The manual workflow was added but not
+dispatched. See [runner controls](../how-to/run-resubscribe-soak-tests.md).
+
+All 442 unit tests and 93 harness checks passed in Debug and Release; `just ci` passed, builds
+had no warnings, and both new live cases skipped without opt-in. No shipping library code changed.
+
+This covers bounded, sequential sharded resubscription after slot-owner changes, not a reconnect
+storm, hours-long soak, task-object counts, live TLS recovery, other server versions, standalone
+subscriber restart, or server-to-server migration-error reconciliation. Publishing resumes only
+after recovery; zero local drops is not a promise of replay or lossless delivery during an outage.
+
+## Other recovery experiments
+
 | Experiment | Bound and invariant | Evidence |
 |---|---|---|
 | Non-listening loopback endpoint | Two bounded connect attempts; `NotSent`; same owner succeeds when that exact endpoint begins listening; failed write is not replayed. | Deterministic suite passed locally. The observed macOS failure was timeout; refusal is accepted on kernels that report it. |
