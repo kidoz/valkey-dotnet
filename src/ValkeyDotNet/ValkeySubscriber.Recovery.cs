@@ -151,8 +151,7 @@ public sealed partial class ValkeySubscriber
                     continue;
                 }
             }
-            await RestoreChangeAsync(registration.Pattern ? "psubscribe" : "subscribe", registration, token)
-                .ConfigureAwait(false);
+            await RestoreChangeAsync(SubscribeKind(registration.Pattern), registration, token).ConfigureAwait(false);
         }
 
         // Local unsubscribe remains available during recovery, even with an ACK in flight.
@@ -175,7 +174,7 @@ public sealed partial class ValkeySubscriber
             }
             foreach (var registration in removed)
             {
-                await RestoreChangeAsync(registration.Pattern ? "punsubscribe" : "unsubscribe", registration, token)
+                await RestoreChangeAsync(UnsubscribeKind(registration.Pattern), registration, token)
                     .ConfigureAwait(false);
             }
         }

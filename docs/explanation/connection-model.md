@@ -135,8 +135,11 @@ knobs; raising them by default weakens the process against a hostile peer.
 
 Replica reads, cluster-wide scans, Sentinel discovery, and general-purpose pooling remain absent.
 The dedicated subscriber treats disconnect as terminal by default, with opt-in bounded restoration
-of confirmed channel/pattern subscriptions. Tracking invalidations and topology-aware sharded Pub/Sub
-still need additional state machines and recovery evidence before they become part of that API.
+of confirmed channel/pattern or shard subscriptions on the same endpoint. Tracking invalidations
+use a separate client. The cluster subscriber adds slot-routed sharded primitives with dedicated
+sockets, but automatic relocation during slot migration and its live recovery evidence remain work
+for a later state machine; current topology loss is an explicit failure. See the
+[sharded Pub/Sub contract](../reference/cluster-subscriber.md).
 
 The generic command API means none of that blocks day-to-day use. Scripting via `EVAL` covers the
 atomicity cases that would otherwise need a held connection.

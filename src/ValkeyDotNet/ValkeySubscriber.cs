@@ -6,7 +6,7 @@ namespace ValkeyDotNet;
 
 /// <summary>
 /// A dedicated RESP2/RESP3 channel and pattern subscriber with optional bounded restoration.
-/// Tracking and sharded subscriptions are not supported.
+/// Sharded mode is opt-in and separate from global channels/patterns. Tracking uses a separate client.
 /// </summary>
 public sealed partial class ValkeySubscriber : IAsyncDisposable
 {
@@ -125,12 +125,42 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
     public Task<ValkeySubscription> SubscribeAsync(
         ValkeyArgument channel,
         CancellationToken cancellationToken = default
-    ) => SubscribeCoreAsync(channel, false, cancellationToken);
+    ) => SubscribeModeAsync(channel, false, false, cancellationToken);
 
     public Task<ValkeySubscription> SubscribePatternAsync(
         ValkeyArgument pattern,
         CancellationToken cancellationToken = default
-    ) => SubscribeCoreAsync(pattern, true, cancellationToken);
+    ) => SubscribeModeAsync(pattern, true, false, cancellationToken);
+
+    /// <summary>Subscribes to one binary shard channel; requires UseShardedPubSub and a correctly routed node.</summary>
+    public Task<ValkeySubscription> SubscribeShardedAsync(
+        ValkeyArgument channel,
+        CancellationToken cancellationToken = default
+    ) => SubscribeModeAsync(channel, false, true, cancellationToken);
+
+    private Task<ValkeySubscription> SubscribeModeAsync(
+        ValkeyArgument name,
+        bool pattern,
+        bool sharded,
+        CancellationToken cancellationToken
+    )
+    {
+        if (sharded != _options.UseShardedPubSub)
+        {
+            throw new InvalidOperationException("Global and sharded subscriptions require separate subscriber modes.");
+        }
+        return SubscribeCoreAsync(name, pattern, cancellationToken);
+    }
+
+    private string SubscribeKind(bool pattern) =>
+        _options.UseShardedPubSub ? "ssubscribe"
+        : pattern ? "psubscribe"
+        : "subscribe";
+
+    private string UnsubscribeKind(bool pattern) =>
+        _options.UseShardedPubSub ? "sunsubscribe"
+        : pattern ? "punsubscribe"
+        : "unsubscribe";
 
     private async Task<ValkeySubscription> SubscribeCoreAsync(
         ValkeyArgument name,
@@ -177,7 +207,7 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
                 registration = new Registration(bytes, pattern);
             }
             await ChangeAsync(
-                    pattern ? "psubscribe" : "subscribe",
+                    SubscribeKind(pattern),
                     registration,
                     () =>
                     {
@@ -250,7 +280,7 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
                 }
             }
             await ChangeAsync(
-                    registration.Pattern ? "punsubscribe" : "unsubscribe",
+                    UnsubscribeKind(registration.Pattern),
                     registration,
                     () => Remove(handle, registration),
                     started,
@@ -458,7 +488,7 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
                 _pending = null;
                 try
                 {
-                    ThrowServerError(frame);
+                    ThrowServerError(frame, _options.UseShardedPubSub);
                 }
                 catch (ValkeyServerException error)
                 {
@@ -490,7 +520,24 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
         }
 
         var kind = items[0].AsString();
-        if (kind is "subscribe" or "psubscribe" or "unsubscribe" or "punsubscribe")
+        if (_options.UseShardedPubSub && kind == "sunsubscribe" && _pending?.Kind != "sunsubscribe")
+        {
+            if (
+                items.Count != 3
+                || items[1].Type != RespType.BlobString
+                || items[2].Type != RespType.Integer
+                || items[1].AsBytes().Length > _options.MaxChannelBytes
+                || items[2].AsInt64() != _confirmed.Count - 1
+                || !_confirmed.ContainsKey(Key(items[1].AsBytes().Span, false))
+            )
+            {
+                throw new ValkeyProtocolException("Malformed unsolicited shard unsubscription.");
+            }
+            throw new ValkeyClusterException(
+                "The server removed a shard subscription; refresh topology and subscribe again."
+            );
+        }
+        if (kind is "subscribe" or "psubscribe" or "unsubscribe" or "punsubscribe" or "ssubscribe" or "sunsubscribe")
         {
             var pending = _pending;
             if (
@@ -506,7 +553,7 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
                 throw new ValkeyProtocolException("Mismatched subscription acknowledgement.");
             }
 
-            var subscribing = kind is "subscribe" or "psubscribe";
+            var subscribing = kind is "subscribe" or "psubscribe" or "ssubscribe";
             var expectedCount = _confirmed.Count + (subscribing ? 1 : -1);
             if (items[2].AsInt64() != expectedCount)
             {
@@ -529,7 +576,7 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
         }
         var pattern = kind == "pmessage";
         if (
-            kind != "message" && !pattern
+            (_options.UseShardedPubSub ? kind != "smessage" : kind != "message" && !pattern)
             || items.Count != (pattern ? 4 : 3)
             || items.Skip(1).Any(item => item.Type != RespType.BlobString)
         )
@@ -549,7 +596,8 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
         var message = new ValkeyPubSubMessage(
             items[pattern ? 2 : 1].AsBytes(),
             items[pattern ? 3 : 2].AsBytes(),
-            pattern ? name : (ReadOnlyMemory<byte>?)null
+            pattern ? name : (ReadOnlyMemory<byte>?)null,
+            _options.UseShardedPubSub
         );
         foreach (var handle in registration.Handles)
         {
@@ -563,7 +611,7 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
     private static string Key(ReadOnlySpan<byte> name, bool pattern) =>
         (pattern ? "p" : "c") + Convert.ToBase64String(name);
 
-    private static void ThrowServerError(RespValue frame)
+    private static void ThrowServerError(RespValue frame, bool sharded = false)
     {
         if (frame.Type is not (RespType.SimpleError or RespType.BlobError))
         {
@@ -577,6 +625,8 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
             code.SequenceEqual("NOAUTH"u8) ? "NOAUTH"
             : code.SequenceEqual("WRONGPASS"u8) ? "WRONGPASS"
             : code.SequenceEqual("NOPERM"u8) ? "NOPERM"
+            : sharded && code.SequenceEqual("MOVED"u8) ? "MOVED"
+            : sharded && code.SequenceEqual("ASK"u8) ? "ASK"
             : "ERR";
         throw new ValkeyServerException(category + " Subscriber command rejected.");
     }

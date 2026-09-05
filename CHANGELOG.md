@@ -4,6 +4,10 @@
 
 ### Added
 
+- RESP2/RESP3 sharded subscriber mode and a bounded cluster subscriber with dedicated slot-routed
+  streams, endpoint mapping, initial MOVED-triggered topology refresh, and explicit topology-loss
+  failures. Automatic slot-migration relocation and ASK subscription handling remain unsupported.
+- Sharded lifecycle regressions and gated three-primary live SPUBLISH/SSUBSCRIBE integration cases.
 - Standalone RESP3 tracking client with binary invalidations, NOLOOP, BCAST/PREFIX, tracking
   re-enablement on replacement, and bounded async delivery with invalidate-all on overflow or loss.
 - Tracking lifecycle regressions and gated live invalidation/recovery cases; no local cache or
@@ -14,7 +18,7 @@
   TLS/session settings, parsing bounds, and disposal; an explicitly gated live connection-kill test.
 - Dedicated RESP2/RESP3 subscriber with binary channel/pattern streams, independent local handles,
   bounded drop-incoming queues and drop counters, bounded acknowledgement lifecycle, and terminal
-  cancellation/disposal semantics. Sharded subscriptions remain unsupported; RESP3 tracking uses
+  cancellation/disposal semantics. Sharded subscriptions use a separate mode; RESP3 tracking uses
   its own command-client API.
 - Bounded RESP2/RESP3 concurrent connection-loss regressions and recovery from a non-listening
   loopback endpoint without replaying an unsent write.

@@ -1,0 +1,349 @@
+namespace ValkeyDotNet;
+
+/// <summary>
+/// Routes sharded Pub/Sub to primaries using dedicated sockets, never ordinary command connections.
+/// Each handle owns one socket. Initial MOVED rejection triggers bounded topology refresh; ASK and
+/// established-subscription topology changes are explicit failures, not silent relocation.
+/// </summary>
+public sealed class ValkeyClusterSubscriber : IAsyncDisposable
+{
+    private readonly ValkeyClusterSubscriberOptions _options;
+    private readonly ValkeyClusterClient _cluster;
+    private readonly object _sync = new();
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly CancellationTokenSource _shutdown = new();
+    private readonly HashSet<ValkeyShardedSubscription> _subscriptions = [];
+    private int _operations;
+    private Task? _disposal;
+
+    private ValkeyClusterSubscriber(ValkeyClusterSubscriberOptions options, ValkeyClusterClient cluster)
+    {
+        _options = options;
+        _cluster = cluster;
+    }
+
+    /// <summary>Discovers the complete primary slot map within one operation budget.</summary>
+    public static async Task<ValkeyClusterSubscriber> ConnectAsync(
+        ValkeyClusterSubscriberOptions? options = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        options ??= new();
+        options.Validate();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(options.OperationTimeout);
+        try
+        {
+            var cluster = await ValkeyClusterClient.ConnectAsync(options.Cluster, timeout.Token).ConfigureAwait(false);
+            return new ValkeyClusterSubscriber(options, cluster);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new ValkeyCommandTimeoutException(options.OperationTimeout, ValkeyCommandDeliveryStatus.NotSent);
+        }
+    }
+
+    /// <summary>Number of retained handles, including terminal handles awaiting disposal.</summary>
+    public int SubscriptionCount
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _subscriptions.Count;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Opens one independent, binary-safe shard subscription. Duplicate names intentionally use
+    /// independent sockets. The initial attempt plus MaxRedirects topology-refresh retries are bounded.
+    /// </summary>
+    public Task<ValkeyShardedSubscription> SubscribeAsync(
+        ValkeyArgument channel,
+        CancellationToken cancellationToken = default
+    )
+    {
+        if (channel.Bytes.Length > _options.MaxChannelBytes)
+        {
+            throw new ArgumentOutOfRangeException(nameof(channel));
+        }
+        return RunAsync(token => SubscribeCoreAsync(channel, token), cancellationToken);
+    }
+
+    private async Task<ValkeyShardedSubscription> SubscribeCoreAsync(ValkeyArgument channel, CancellationToken token)
+    {
+        lock (_sync)
+        {
+            ThrowIfDisposed();
+            if (_subscriptions.Count >= _options.MaxSubscriptions)
+            {
+                throw new ValkeyCapacityException("The cluster subscriber's subscription capacity is full.");
+            }
+        }
+        var name = channel.Bytes.ToArray();
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await OpenSubscriptionAsync(name, token).ConfigureAwait(false);
+            }
+            catch (ValkeyServerException error) when (error.ErrorCode == "MOVED")
+            {
+                if (attempt >= _options.Cluster.MaxRedirects)
+                {
+                    throw new ValkeyClusterException("Shard subscription topology-refresh attempts were exhausted.");
+                }
+                // Never follow endpoint text from a subscriber error. Reload validated discovery data.
+                await _cluster.RefreshTopologyAsync(token).ConfigureAwait(false);
+            }
+            catch (ValkeyServerException error) when (error.ErrorCode == "ASK")
+            {
+                throw new ValkeyClusterException(
+                    "Shard subscription ASK migration is not supported; retry after slot migration completes."
+                );
+            }
+        }
+    }
+
+    private async Task<ValkeyShardedSubscription> OpenSubscriptionAsync(byte[] name, CancellationToken token)
+    {
+        var node = _cluster.GetSubscriptionNodeOptions(name);
+        var subscriber = await ValkeySubscriber
+            .ConnectAsync(_options.CreateSubscriberOptions(node), token)
+            .ConfigureAwait(false);
+        var transferred = false;
+        try
+        {
+            var subscription = await subscriber.SubscribeShardedAsync(name, token).ConfigureAwait(false);
+            var handle = new ValkeyShardedSubscription(this, subscriber, subscription);
+            lock (_sync)
+            {
+                ThrowIfDisposed();
+                _subscriptions.Add(handle);
+                transferred = true;
+            }
+            return handle;
+        }
+        finally
+        {
+            if (!transferred)
+            {
+                await subscriber.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>Refreshes routing for future subscriptions; existing streams are not moved or duplicated.</summary>
+    public async Task RefreshTopologyAsync(CancellationToken cancellationToken = default)
+    {
+        await RunAsync(
+                async token =>
+                {
+                    await _cluster.RefreshTopologyAsync(token).ConfigureAwait(false);
+                    return true;
+                },
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    internal async Task ReleaseAsync(
+        ValkeyShardedSubscription handle,
+        bool unsubscribe,
+        CancellationToken cancellationToken
+    )
+    {
+        Task? disposal;
+        lock (_sync)
+        {
+            disposal = _disposal;
+            if (disposal is null && !_subscriptions.Contains(handle))
+            {
+                return;
+            }
+        }
+        if (disposal is not null)
+        {
+            await disposal.ConfigureAwait(false);
+            return;
+        }
+        if (!unsubscribe)
+        {
+            // Local disposal must work even when lifecycle admission is full. Keep its reservation
+            // until the physical reader/recovery has stopped; simultaneous unsubscribe settles on close.
+            await handle.Subscriber.DisposeAsync().ConfigureAwait(false);
+            lock (_sync)
+            {
+                _subscriptions.Remove(handle);
+            }
+            return;
+        }
+        try
+        {
+            await RunAsync(
+                    async token =>
+                    {
+                        lock (_sync)
+                        {
+                            if (!_subscriptions.Contains(handle))
+                            {
+                                return true;
+                            }
+                        }
+                        try
+                        {
+                            if (unsubscribe)
+                            {
+                                await handle.Subscription.UnsubscribeAsync(token).ConfigureAwait(false);
+                            }
+                        }
+                        finally
+                        {
+                            await handle.Subscriber.DisposeAsync().ConfigureAwait(false);
+                            lock (_sync)
+                            {
+                                _subscriptions.Remove(handle);
+                            }
+                        }
+                        return true;
+                    },
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception) when (_shutdown.IsCancellationRequested)
+        {
+            Task closing;
+            lock (_sync)
+            {
+                closing = _disposal!;
+            }
+            await closing.ConfigureAwait(false);
+        }
+    }
+
+    private CancellationTokenSource CreateDeadline(CancellationToken token)
+    {
+        var timeout = CancellationTokenSource.CreateLinkedTokenSource(token, _shutdown.Token);
+        timeout.CancelAfter(_options.OperationTimeout);
+        return timeout;
+    }
+
+    private async Task<T> RunAsync<T>(Func<CancellationToken, Task<T>> operation, CancellationToken token)
+    {
+        using var deadline = CreateDeadline(token);
+        var entered = false;
+        try
+        {
+            await EnterAsync(deadline.Token).ConfigureAwait(false);
+            entered = true;
+            return await operation(deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+            throw new ObjectDisposedException(nameof(ValkeyClusterSubscriber));
+        }
+        catch (OperationCanceledException error)
+            when (!token.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new ValkeyCommandTimeoutException(
+                _options.OperationTimeout,
+                error is IValkeyCommandFailure failure ? failure.DeliveryStatus : ValkeyCommandDeliveryStatus.NotSent
+            );
+        }
+        finally
+        {
+            if (entered)
+            {
+                Exit();
+            }
+        }
+    }
+
+    private async Task EnterAsync(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        lock (_sync)
+        {
+            ThrowIfDisposed();
+            if (_operations >= _options.MaxConcurrentOperations)
+            {
+                throw new ValkeyCapacityException("The cluster subscriber's operation capacity is full.");
+            }
+            _operations++;
+        }
+        try
+        {
+            await _gate.WaitAsync(token).ConfigureAwait(false);
+        }
+        catch
+        {
+            lock (_sync)
+            {
+                _operations--;
+            }
+            throw;
+        }
+    }
+
+    private void Exit()
+    {
+        _gate.Release();
+        lock (_sync)
+        {
+            _operations--;
+        }
+    }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposal is not null, this);
+
+    /// <summary>Cancels pending acquisition, closes all shard streams, and disposes discovery connections.</summary>
+    public ValueTask DisposeAsync()
+    {
+        TaskCompletionSource completion;
+        lock (_sync)
+        {
+            if (_disposal is not null)
+            {
+                return new ValueTask(_disposal);
+            }
+            completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _disposal = completion.Task;
+        }
+        _ = DisposeCoreAsync(completion);
+        return new ValueTask(completion.Task);
+    }
+
+    private async Task DisposeCoreAsync(TaskCompletionSource completion)
+    {
+        try
+        {
+            await _shutdown.CancelAsync().ConfigureAwait(false);
+            await _gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                ValkeyShardedSubscription[] snapshot;
+                lock (_sync)
+                {
+                    snapshot = _subscriptions.ToArray();
+                    _subscriptions.Clear();
+                }
+                foreach (var handle in snapshot)
+                {
+                    await handle.Subscriber.DisposeAsync().ConfigureAwait(false);
+                }
+                await _cluster.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                _gate.Release();
+            }
+            completion.TrySetResult();
+        }
+        catch (Exception error)
+        {
+            completion.TrySetException(error);
+        }
+    }
+}

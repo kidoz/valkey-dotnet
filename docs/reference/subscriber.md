@@ -18,6 +18,7 @@ selected database and is best-effort, with no durable replay.
 | `ValkeySubscriber.ConnectAsync(options, cancellationToken)` | Opens TCP or TLS, authenticates with HELLO, honors negotiated protocol and optional SELECT, then starts one reader. |
 | `SubscribeAsync(channel, cancellationToken)` | Returns a local handle after the matching server acknowledgement. |
 | `SubscribePatternAsync(pattern, cancellationToken)` | Same behavior for a binary glob pattern. |
+| `SubscribeShardedAsync(channel, cancellationToken)` | SSUBSCRIBE on a correctly routed node; requires `UseShardedPubSub=true`. |
 | `ValkeySubscription.ReadAllAsync(cancellationToken)` | Async stream of binary `ValkeyPubSubMessage` values. |
 | `ValkeySubscription.UnsubscribeAsync(cancellationToken)` | Removes this local handle. While connected, the final handle waits for the server unsubscribe acknowledgement. During recovery, removal is local and restoration reconciles any in-flight server registration. |
 | `ValkeySubscription.DisposeAsync()` | Unsubscribes with the configured operation timeout. Idempotent after removal or owner shutdown. |
@@ -44,6 +45,7 @@ shape, kind, name, or count terminates only the subscriber connection.
 | `ValkeySubscriberOptions` property | Default | Bound |
 |---|---|---|
 | `Connection` | New `ValkeyClientOptions` | Existing TLS, handshake timeout, byte, element and nesting bounds apply. |
+| `UseShardedPubSub` | `false` | Selects shard-channel mode; cannot mix global channels/patterns. |
 | `QueueCapacity` | 128 | Buffered messages per local handle; 1–1,048,576. |
 | `MaxSubscriptions` | 1,024 | Local handles, including duplicates; 1–1,048,576. |
 | `MaxChannelBytes` | 16,384 | Subscription name/pattern bytes; 1–1,048,576. Empty names are allowed. |
@@ -118,10 +120,12 @@ cache is current. Consumers can observe `ConnectionLosses` and apply their own m
 policy. Duplicate channel/pattern matches remain separate deliveries; no application deduplication is
 performed.
 
-There is no key-tracking lifecycle, sharded Pub/Sub, topology migration, or
-subscriber activity/Meter instrumentation yet. Connecting this standalone subscriber to a cluster
-node does not add topology-aware routing. This first version is not full invalidation-readiness
-certification.
+`UseShardedPubSub=true` selects a separate SSUBSCRIBE/SUNSUBSCRIBE mode and enables
+`SubscribeShardedAsync`; global channels/patterns are rejected in that mode. It does not add node
+discovery. [The cluster subscriber](cluster-subscriber.md) provides slot routing on dedicated
+connections, with explicit limitations for topology changes. Tracking has its own
+[RESP3 client](client-tracking.md). Automatic subscription relocation and subscriber activity/Meter
+instrumentation remain absent. This is not full invalidation-readiness certification.
 
 ## Verification evidence
 

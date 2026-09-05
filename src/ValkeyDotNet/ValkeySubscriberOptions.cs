@@ -5,6 +5,12 @@ public sealed class ValkeySubscriberOptions
 {
     public ValkeyClientOptions Connection { get; init; } = new();
 
+    /// <summary>
+    /// Uses SSUBSCRIBE/SUNSUBSCRIBE and smessage on this dedicated connection. Global channels and
+    /// patterns cannot be mixed into this mode. Node routing remains the caller's responsibility.
+    /// </summary>
+    public bool UseShardedPubSub { get; init; }
+
     /// <summary>Maximum buffered messages per local subscription. Overflow drops the incoming message.</summary>
     public int QueueCapacity { get; init; } = 128;
 

@@ -4,6 +4,76 @@ namespace ValkeyDotNet.IntegrationTests;
 
 public sealed class ValkeyClusterIntegrationTests
 {
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
+    public async Task ShardedPubSubRoutesAcrossThreePrimariesWithIndependentDuplicateHandles(ValkeyProtocol protocol)
+    {
+        var endpointText = Environment.GetEnvironmentVariable("VALKEYDOTNET_CLUSTER_ENDPOINTS");
+        if (string.IsNullOrWhiteSpace(endpointText))
+        {
+            Assert.Skip("Set VALKEYDOTNET_CLUSTER_ENDPOINTS to an isolated disposable three-primary cluster.");
+        }
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        var token = deadline.Token;
+        var seeds = endpointText
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(ParseEndpoint)
+            .Select(endpoint => new ValkeyClientOptions
+            {
+                Host = endpoint.Host,
+                Port = endpoint.Port,
+                Protocol = protocol,
+            })
+            .ToArray();
+        var mappedHost = Environment.GetEnvironmentVariable("VALKEYDOTNET_CLUSTER_MAPPED_HOST");
+        var options = new ValkeyClusterOptions
+        {
+            SeedNodes = seeds,
+            EndpointMapper = string.IsNullOrWhiteSpace(mappedHost)
+                ? null
+                : endpoint => new ValkeyClusterEndpoint(mappedHost, endpoint.Port),
+        };
+        await using var publisher = await ValkeyClusterClient.ConnectAsync(options, token);
+        await using var subscriber = await ValkeyClusterSubscriber.ConnectAsync(
+            new ValkeyClusterSubscriberOptions { Cluster = options },
+            token
+        );
+        var prefix = "shards-" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
+        var tags = new[] { FindKey(prefix, 0, 5460), FindKey(prefix, 5461, 10922), FindKey(prefix, 10923, 16383) };
+        foreach (var tag in tags)
+        {
+            byte[] channel = [.. System.Text.Encoding.UTF8.GetBytes("{" + tag + "}"), 0, 255, 13, 10];
+            byte[] payload = [255, 0, 13, 10];
+            await using var first = await subscriber.SubscribeAsync(channel, token);
+            await using var second = await subscriber.SubscribeAsync(channel, token);
+            await first.UnsubscribeAsync(token);
+            await using var messages = second.ReadAllAsync(token).GetAsyncEnumerator(token);
+            Assert.Equal(
+                1,
+                (
+                    await publisher.ExecuteAsync(channel, new ValkeyCommand("SPUBLISH", channel, payload), token)
+                ).AsInt64()
+            );
+            Assert.True(await messages.MoveNextAsync());
+            Assert.True(messages.Current.IsSharded);
+            Assert.Null(messages.Current.Pattern);
+            Assert.Equal(channel, messages.Current.Channel.ToArray());
+            Assert.Equal(payload, messages.Current.Payload.ToArray());
+            Assert.Equal(0, second.DroppedMessages);
+            await second.UnsubscribeAsync(token);
+            Assert.Equal(
+                0,
+                (
+                    await publisher.ExecuteAsync(channel, new ValkeyCommand("SPUBLISH", channel, payload), token)
+                ).AsInt64()
+            );
+        }
+        Assert.Equal(0, subscriber.SubscriptionCount);
+        Assert.Equal("PONG", await publisher.PingAsync(token));
+    }
+
     [Fact]
     public async Task ClusterRoutesAndPipelinesAcrossPrimaries()
     {
