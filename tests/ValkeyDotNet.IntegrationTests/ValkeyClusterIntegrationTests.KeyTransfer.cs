@@ -25,6 +25,14 @@ public sealed partial class ValkeyClusterIntegrationTests
     [Theory]
     [InlineData(ValkeyProtocol.Resp2)]
     [InlineData(ValkeyProtocol.Resp3)]
+    public async Task OwnedAtomicMigrationPreservesConcurrentWritesExpiryAndShardStream(ValkeyProtocol protocol)
+    {
+        await VerifyOwnedKeyMigrationAsync(protocol, OwnedMigrationMode.ConcurrentWritesAfterSnapshot);
+    }
+
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
     public async Task OwnedAtomicCancellationPreservesSourceKeysExpiryAndShardStream(ValkeyProtocol protocol)
     {
         await VerifyOwnedKeyMigrationAsync(protocol, OwnedMigrationMode.CancelBeforeTransfer);
@@ -50,6 +58,7 @@ public sealed partial class ValkeyClusterIntegrationTests
     {
         Legacy,
         Atomic,
+        ConcurrentWritesAfterSnapshot,
         CancelBeforeTransfer,
         DisconnectAfterSnapshot,
         LostMigrateReply,
@@ -76,11 +85,13 @@ public sealed partial class ValkeyClusterIntegrationTests
         var sourceOnlyIoError = mode == OwnedMigrationMode.SourceOnlyIoError;
         var cancelBeforeTransfer = mode == OwnedMigrationMode.CancelBeforeTransfer;
         var disconnectAfterSnapshot = mode == OwnedMigrationMode.DisconnectAfterSnapshot;
+        var concurrentWrites = mode == OwnedMigrationMode.ConcurrentWritesAfterSnapshot;
         var retainsSource = cancelBeforeTransfer || disconnectAfterSnapshot || sourceOnlyIoError;
         var flag = mode switch
         {
             OwnedMigrationMode.Legacy => "VALKEYDOTNET_RUN_KEY_TRANSFER_TESTS",
             OwnedMigrationMode.Atomic => "VALKEYDOTNET_RUN_ATOMIC_MIGRATION_TESTS",
+            OwnedMigrationMode.ConcurrentWritesAfterSnapshot => "VALKEYDOTNET_RUN_ATOMIC_WRITES_TESTS",
             OwnedMigrationMode.CancelBeforeTransfer => "VALKEYDOTNET_RUN_ATOMIC_CANCELLATION_TESTS",
             OwnedMigrationMode.LostMigrateReply => "VALKEYDOTNET_RUN_MIGRATE_REPLY_LOSS_TESTS",
             OwnedMigrationMode.SourceOnlyIoError => "VALKEYDOTNET_RUN_MIGRATE_IOERR_TESTS",
@@ -93,7 +104,9 @@ public sealed partial class ValkeyClusterIntegrationTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromMinutes(5));
         var token = deadline.Token;
-        await using var cluster = new MigrationValkeyCluster(enableMigrationDebug: disconnectAfterSnapshot);
+        await using var cluster = new MigrationValkeyCluster(
+            enableMigrationDebug: disconnectAfterSnapshot || concurrentWrites
+        );
         TestContext.Current.TestOutputHelper?.WriteLine(
             $"Owned key-migration project: {cluster.Project}; protocol={protocol}; mode={mode}"
         );
@@ -180,6 +193,67 @@ public sealed partial class ValkeyClusterIntegrationTests
         {
             await cluster.BeginSlotMigrationAsync(slot, 0, 1, 2, token);
             await cluster.TimeoutOwnedKeyBeforeRestoreAsync(expiringKey, protocol, token);
+        }
+        else if (concurrentWrites)
+        {
+            await cluster.CompleteAtomicSlotMigrationAfterWritesAsync(
+                expiringKey,
+                persistentKey,
+                protocol,
+                async bounded =>
+                {
+                    await using var secondWriter = await ValkeyClusterClient.ConnectAsync(
+                        cluster.Options(protocol),
+                        bounded
+                    );
+                    await VerifySlotOwnerAsync(cluster, slot, 0, protocol, bounded);
+                    // Two independent routed clients, one ordered writer per key, at most two pending writes.
+                    // Every round must acknowledge both updates before the next round starts; never replay.
+                    for (byte sequence = 1; sequence <= 32; sequence++)
+                    {
+                        var nextExpiring = expiringValue.ToArray();
+                        var nextPersistent = persistentValue.ToArray();
+                        nextExpiring[^1] = sequence;
+                        nextPersistent[^1] = sequence;
+                        var replies = await Task.WhenAll(
+                            commands.ExecuteAsync(
+                                expiringKey,
+                                new ValkeyCommand("SET", expiringKey, nextExpiring, "XX", "KEEPTTL"),
+                                bounded
+                            ),
+                            secondWriter.ExecuteAsync(
+                                persistentKey,
+                                new ValkeyCommand("SET", persistentKey, nextPersistent, "XX", "KEEPTTL"),
+                                bounded
+                            )
+                        );
+                        Assert.All(replies, reply => Assert.Equal("OK", reply.AsString()));
+                        expiringValue = nextExpiring;
+                        persistentValue = nextPersistent;
+                    }
+                    await VerifyTransferredValuesAsync(
+                        commands,
+                        expiringKey,
+                        expiringValue,
+                        persistentKey,
+                        persistentValue,
+                        originalExpiry,
+                        bounded
+                    );
+                    Assert.Equal(
+                        originalExpiry,
+                        (await source.ExecuteAsync(new ValkeyCommand("PEXPIRETIME", expiringKey), bounded)).AsInt64()
+                    );
+                    await VerifySlotOwnerAsync(cluster, slot, 0, protocol, bounded);
+                    await VerifyDeliveryAsync(commands, channel, messages, 1, bounded);
+                    await VerifyDeliveryAsync(commands, stationary, stationaryMessages, 1, bounded);
+                    Assert.Equal(0, handle.ConnectionLosses);
+                    TestContext.Current.TestOutputHelper?.WriteLine(
+                        "logical_writers=2; writes_per_key=32; acknowledged_writes=64; max_pending_writes=2; final_sequence=32; writer_replays=0"
+                    );
+                },
+                token
+            );
         }
         else if (disconnectAfterSnapshot)
         {
@@ -340,6 +414,7 @@ public sealed partial class ValkeyClusterIntegrationTests
         }
         Assert.Equal(0, handle.DroppedMessages);
         Assert.Equal(0, untouched.ConnectionLosses);
+        Assert.Equal(0, untouched.DroppedMessages);
         Assert.Equal(
             retainsSource ? 1 : 0,
             (await source.ExecuteAsync(new ValkeyCommand("PUBSUB", "SHARDNUMSUB", channel), token))

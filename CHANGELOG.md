@@ -17,6 +17,10 @@
 
 ### Added
 
+- Opt-in atomic migration concurrent-writer runner and manual workflow: acknowledge 64 bounded
+  binary updates after snapshot import, then verify final values, unchanged expiration, and
+  original RESP2/RESP3 sharded streams after cutover.
+
 - Opt-in bulk RESTORE acknowledgment-loss runner and manual workflow: confirm one key transfer,
   withhold the second restore reply, and independently reconcile moved/duplicate binary keys,
   expirations, and original RESP2/RESP3 sharded streams without replay or cutover.

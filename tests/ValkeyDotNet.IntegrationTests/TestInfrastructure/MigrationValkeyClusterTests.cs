@@ -79,6 +79,73 @@ public sealed class MigrationValkeyClusterTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RefusesAtomicWritersBeforeOwnedDebugClusterInitialization(bool enableMigrationDebug)
+    {
+        await using var cluster = new MigrationValkeyCluster(enableMigrationDebug: enableMigrationDebug);
+        var prefix = System.Text.Encoding.UTF8.GetBytes("{" + cluster.Project + ":0}");
+        var invoked = false;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cluster.CompleteAtomicSlotMigrationAfterWritesAsync(
+                [.. prefix, 1],
+                [.. prefix, 2],
+                ValkeyProtocol.Resp3,
+                _ =>
+                {
+                    invoked = true;
+                    return Task.CompletedTask;
+                },
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.False(invoked);
+    }
+
+    [Fact]
+    public async Task AtomicWritersRefuseUnscopedDuplicateAndDifferentSlotKeys()
+    {
+        await using var cluster = new MigrationValkeyCluster(enableMigrationDebug: true);
+        var key = System.Text.Encoding.UTF8.GetBytes("{" + cluster.Project + ":0}");
+        var other = System.Text.Encoding.UTF8.GetBytes("{" + cluster.Project + ":1}");
+        Assert.NotEqual(ValkeyClusterClient.GetHashSlot(key), ValkeyClusterClient.GetHashSlot(other));
+        var invoked = false;
+        Task WriteAsync(CancellationToken token)
+        {
+            invoked = true;
+            return Task.CompletedTask;
+        }
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            cluster.CompleteAtomicSlotMigrationAfterWritesAsync(
+                "external"u8.ToArray(),
+                key,
+                ValkeyProtocol.Resp2,
+                WriteAsync,
+                TestContext.Current.CancellationToken
+            )
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cluster.CompleteAtomicSlotMigrationAfterWritesAsync(
+                key,
+                key,
+                ValkeyProtocol.Resp2,
+                WriteAsync,
+                TestContext.Current.CancellationToken
+            )
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cluster.CompleteAtomicSlotMigrationAfterWritesAsync(
+                key,
+                other,
+                ValkeyProtocol.Resp2,
+                WriteAsync,
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.False(invoked);
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("id=1 flags=N")]
     [InlineData("id=0 flags=E")]

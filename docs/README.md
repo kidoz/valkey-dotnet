@@ -36,6 +36,8 @@ Data migration: [run isolated nonempty-key transfer tests](how-to/run-key-transf
 
 Atomic migration: [run isolated atomic slot-migration tests](how-to/run-atomic-migration-tests.md).
 
+Concurrent mutation: [run isolated post-snapshot atomic writer tests](how-to/run-atomic-writes-tests.md).
+
 Migration cancellation: [run isolated pre-transfer cancellation tests](how-to/run-atomic-cancellation-tests.md).
 
 Migration rollback: [run isolated post-snapshot link-failure tests](how-to/run-atomic-rollback-tests.md).

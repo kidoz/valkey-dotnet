@@ -4,11 +4,28 @@ namespace ValkeyDotNet.IntegrationTests.TestInfrastructure;
 
 internal sealed partial class MigrationValkeyCluster
 {
-    internal async Task FailAtomicSlotMigrationAfterSnapshotAsync(
+    internal Task FailAtomicSlotMigrationAfterSnapshotAsync(
         byte[] expiringKey,
         byte[] persistentKey,
         ValkeyProtocol protocol,
         Func<CancellationToken, Task> verifyDuringImport,
+        CancellationToken token
+    ) => RunHeldAtomicSlotMigrationAsync(expiringKey, persistentKey, protocol, verifyDuringImport, true, token);
+
+    internal Task CompleteAtomicSlotMigrationAfterWritesAsync(
+        byte[] expiringKey,
+        byte[] persistentKey,
+        ValkeyProtocol protocol,
+        Func<CancellationToken, Task> writeDuringImport,
+        CancellationToken token
+    ) => RunHeldAtomicSlotMigrationAsync(expiringKey, persistentKey, protocol, writeDuringImport, false, token);
+
+    private async Task RunHeldAtomicSlotMigrationAsync(
+        byte[] expiringKey,
+        byte[] persistentKey,
+        ValkeyProtocol protocol,
+        Func<CancellationToken, Task> verifyDuringImport,
+        bool failExport,
         CancellationToken token
     )
     {
@@ -22,7 +39,7 @@ internal sealed partial class MigrationValkeyCluster
         )
         {
             throw new InvalidOperationException(
-                "Rollback requires two distinct same-slot keys and the owned debug fixture."
+                "Held migration requires two distinct same-slot keys and the owned debug fixture."
             );
         }
         var (sourceId, targetId) = await VerifyMigrationAsync(slot, 0, 1, 2, token);
@@ -56,9 +73,9 @@ internal sealed partial class MigrationValkeyCluster
         var number = slot.ToString(CultureInfo.InvariantCulture);
         // The upstream test hook holds the export before write pause/cutover, not the server process.
         // DEBUG is local-only; execute inside the exact verified source container, never over the host port.
-        Assert.Equal("OK", await CommandAsync(0, ["DEBUG", "SLOTMIGRATION", "PREVENT-PAUSE", "1"], bounded));
         try
         {
+            Assert.Equal("OK", await CommandAsync(0, ["DEBUG", "SLOTMIGRATION", "PREVENT-PAUSE", "1"], bounded));
             Assert.Equal(
                 "OK",
                 await CommandAsync(
@@ -75,7 +92,7 @@ internal sealed partial class MigrationValkeyCluster
                 jobName ??= fields["name"];
                 Assert.False(
                     state is "success" or "failed" or "cancelled",
-                    "Export terminated before fault injection."
+                    "Export terminated before the post-snapshot checks."
                 );
                 if (state == "waiting-to-pause")
                 {
@@ -89,7 +106,7 @@ internal sealed partial class MigrationValkeyCluster
                     is "success"
                         or "failed"
                         or "cancelled",
-                "Import terminated before fault injection."
+                "Import terminated before the post-snapshot checks."
             );
             var keys = (
                 await target.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "3"), bounded)
@@ -107,6 +124,52 @@ internal sealed partial class MigrationValkeyCluster
                 ).ErrorCode
             );
             await verifyDuringImport(bounded);
+
+            Assert.Equal(
+                "waiting-to-pause",
+                AtomicJobState(await ReadJobAsync(source, bounded), "EXPORT", slot, sourceId, targetId, jobName)
+            );
+            Assert.False(
+                AtomicJobState(await ReadJobAsync(target, bounded), "IMPORT", slot, sourceId, targetId, jobName)
+                    is "success"
+                        or "failed"
+                        or "cancelled",
+                "Import terminated while the export was held."
+            );
+            if (!failExport)
+            {
+                Assert.Equal("OK", await CommandAsync(0, ["DEBUG", "SLOTMIGRATION", "PREVENT-PAUSE", "0"], bounded));
+                while (true)
+                {
+                    var exported = ValidateAtomicJob(
+                        await ReadJobAsync(source, bounded),
+                        "EXPORT",
+                        slot,
+                        sourceId,
+                        targetId,
+                        jobName
+                    );
+                    var completedImport = ValidateAtomicJob(
+                        await ReadJobAsync(target, bounded),
+                        "IMPORT",
+                        slot,
+                        sourceId,
+                        targetId,
+                        jobName
+                    );
+                    if (exported && completedImport)
+                    {
+                        break;
+                    }
+                    await Task.Delay(50, bounded);
+                }
+                await VerifyMigrationAsync(slot, 0, 1, 0, bounded, expectedTargetKeys: 2);
+                await WaitHealthyAsync(bounded);
+                TestContext.Current.TestOutputHelper?.WriteLine(
+                    $"atomic_job={jobName}; slot={slot}; provisional_keys=2; export_state=success; import_state=success; writes_stage=waiting-to-pause"
+                );
+                return;
+            }
 
             // Only one owned EXPORT exists. Resolve and recheck its exact client ID before closing it.
             var clientId = ParseExportClientId(

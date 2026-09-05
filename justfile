@@ -112,6 +112,13 @@ test-atomic-rollback:
     -method '*OwnedAtomicLinkFailureCleansImportedKeysAndPreservesSourceStream' \
     -showLiveOutput -result-trx artifacts/resilience/atomic-rollback.trx
 
+# Update two owned keys after atomic snapshot import and verify acknowledged data after cutover.
+test-atomic-writes:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_ATOMIC_WRITES_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedAtomicMigrationPreservesConcurrentWritesExpiryAndShardStream' \
+    -showLiveOutput -result-trx artifacts/resilience/atomic-writes.trx
+
 # Cancel one owned atomic migration before transfer and verify unchanged data and sharded delivery.
 test-atomic-cancellation:
     mkdir -p artifacts/resilience
