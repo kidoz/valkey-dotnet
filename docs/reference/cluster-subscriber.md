@@ -142,6 +142,13 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [MIGRATE reply-loss runner](../how-to/run-migrate-reply-loss-tests.md) passed RESP2/RESP3 on
+Valkey 9.1.2 on 2026-09-05. A successful transfer's reply was withheld, the caller reported delivery
+ambiguity, and independent reads reconciled key placement without replay. Sharded delivery stayed
+source-local until planned cutover, then the same stream relocated once with zero drops. This is
+client-facing reply loss, not server-to-server IOERR or duplicate-copy resolution. See the
+[execution record](resilience-evidence.md#migrate-reply-loss-reconciliation--2026-09-05).
+
 The [post-snapshot rollback runner](../how-to/run-atomic-rollback-tests.md) passed RESP2/RESP3 on
 Valkey 9.1.2 on 2026-09-05. Two provisional destination keys were observed before closing the exact
 export link. Both jobs failed and imported keys disappeared; source values/expiration, ownership,
@@ -237,5 +244,5 @@ This live success is separate from overall unit-suite readiness: immediate-close
 and rejection regressions failed intermittently during that verification session. A subsequent
 shutdown-isolation change passed the expanded unit suite and repeated runs. See
 [subscriber verification evidence](subscriber.md#verification-evidence).
-Other atomic failure timing/late cancellation, transfer-failure reconciliation, TLS recovery, prolonged soak, and performance
+Other atomic failure timing/late cancellation, server-to-server transfer-error reconciliation, TLS recovery, prolonged soak, and performance
 evidence remain separate work.

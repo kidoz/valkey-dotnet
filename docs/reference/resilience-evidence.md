@@ -354,3 +354,42 @@ Interruption during a serialized value or partial snapshot, post-handoff failure
 cancellation, transfer-error reconciliation, concurrent writes, TLS, cross-version faults, lock safety,
 and prolonged soak are separate evidence requirements. The
 [run guide](../how-to/run-atomic-rollback-tests.md) defines the exact safety boundary.
+
+## MIGRATE reply-loss reconciliation — 2026-09-05
+
+`just test-migrate-reply-loss` passed both Release RESP2/RESP3 cases on Valkey 9.1.2 in 32.556 seconds,
+with zero failures or skips. Each fresh three-primary cluster held two binary strings, a 4 KiB
+expiring value and a small persistent value. Host/runtime were macOS arm64, SDK 10.0.400 and
+.NET 10.0.11; nodes were capped at 128 MiB/one CPU, without TLS and with DEBUG disabled.
+
+A single-use loopback relay forwarded HELLO, then confirmed and withheld exactly one MIGRATE
+success reply before closing the connection. The caller received `ValkeyConnectionException` with
+`MayHaveBeenSent`; subsequent PING on that physical client threw `ObjectDisposedException`.
+Independent source/destination counts and exact binary key placement showed the expiring key
+had transferred and the persistent key had not. ASK reads confirmed its bytes and TTL, while
+mixed-key MGET returned TRYAGAIN. The lost-reply command was not replayed and no duplicate was deleted.
+
+After reconciliation, a separate MIGRATE moved the remaining persistent key and normal cutover
+relocated the original sharded handle/enumerator/completion task once, with one attempt and zero
+drops. Source/target registrations, all slot maps, unrelated-channel isolation, and byte preservation
+passed. Absolute expiration shifts were +1 ms in RESP2 and 0 ms in RESP3, within the ±1-second
+legacy-transfer tolerance; persistent PTTL remained -1. This is metadata evidence, not a lease proof.
+
+All four known keys were deleted and every node had zero keys/shard channels/named application
+clients before six owned containers/two networks were removed. Evidence:
+`artifacts/resilience/migrate-reply-loss.trx`. The legacy shared-code regression also passed both
+protocols in 32.575 seconds, with +1 ms expiry shifts and six additional containers/two networks
+cleaned up (`artifacts/resilience/key-transfer-after-reply-loss.trx`). Existing application resources
+were retained. The manual **MIGRATE reply loss** workflow was added but not dispatched.
+
+All 442 unit tests and 81 harness checks passed in Debug and Release; builds/formatting were clean
+and both live cases skipped without opt-in. New relay checks cover binary forwarding, byte-at-a-time
+success writes, unexpected replies, one-shot admission/arming, disposal, and both 64 KiB byte budgets.
+The relay has two 4 KiB buffers, a ten-second lifetime, and bounded disposal. No shipping code,
+runtime dependency, parser bound, or replay policy changed.
+
+This covers client-facing loss after server success, not server-to-server IOERR, BUSYKEY, or
+duplicate-copy reconciliation. The [MIGRATE contract](https://valkey.io/commands/migrate/) permits
+different key placements after IOERR. Concurrent writers, other types, TLS, other versions, lock
+safety, and sustained resubscribe soak remain separate. The
+[run guide](../how-to/run-migrate-reply-loss-tests.md) specifies the experiment and safety limits.
