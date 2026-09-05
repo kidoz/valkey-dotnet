@@ -142,6 +142,13 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [pre-transfer cancellation runner](../how-to/run-atomic-cancellation-tests.md) passed RESP2/RESP3
+on Valkey 9.1.2 on 2026-09-05. An observed active export became cancelled before transfer; source
+ownership, binary keys/expiration, registrations, and the original sharded stream stayed unchanged,
+with zero connection losses, attempts, relocations, or drops. This does not cover partial-import
+rollback or late cancellation. See the
+[execution record](resilience-evidence.md#pre-transfer-atomic-cancellation--2026-09-05).
+
 The [atomic slot-migration runner](../how-to/run-atomic-migration-tests.md) passed RESP2/RESP3 on
 Valkey 9.1.2 on 2026-09-05. Correlated EXPORT/IMPORT jobs completed successfully; two binary strings
 retained exact values and absolute expiration metadata. The same stream relocated once with zero
@@ -223,5 +230,5 @@ This live success is separate from overall unit-suite readiness: immediate-close
 and rejection regressions failed intermittently during that verification session. A subsequent
 shutdown-isolation change passed the expanded unit suite and repeated runs. See
 [subscriber verification evidence](subscriber.md#verification-evidence).
-Atomic migration failure/cancellation, transfer-failure reconciliation, TLS recovery, prolonged soak, and performance
+Mid-transfer atomic failure/late cancellation, transfer-failure reconciliation, TLS recovery, prolonged soak, and performance
 evidence remain separate work.

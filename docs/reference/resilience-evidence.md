@@ -266,3 +266,46 @@ This is healthy completion evidence for one quiescent slot and two strings, not 
 atomicity, migration cancellation/failure recovery, other types or large datasets, cross-version
 faults, TLS, lock-lease correctness, lossless Pub/Sub, performance, or prolonged soak. The
 [run guide](../how-to/run-atomic-migration-tests.md) specifies the safety and cleanup limits.
+
+## Pre-transfer atomic cancellation — 2026-09-05
+
+`just test-atomic-cancellation` passed both Release RESP2/RESP3 cases on Valkey 9.1.2 in 26.280 seconds,
+with no failures or skips. Each fresh three-primary cluster contained two source binary strings,
+one expiring 4 KiB value and one persistent value. Host/runtime were macOS arm64, SDK 10.0.400,
+and .NET 10.0.11; nodes were capped at 128 MiB and one CPU, without TLS.
+
+A private administrative MULTI/EXEC transaction initiated a single-slot export, observed its active
+job, cancelled it, and observed the same job in `cancelled` state. Every queue and execution reply
+passed. An independent read retained the terminal state and PING succeeded on the same connection.
+The transaction held asynchronous export progress until cancellation; this is pre-transfer evidence,
+not cancellation racing with a completed job. The destination had no import job. Source cancellation
+scope follows the [Valkey command contract](https://valkey.io/commands/cluster-cancelslotmigrations/).
+
+Both cases retained exact source key placement and values, zero destination keys, positive TTL,
+persistent PTTL=-1, and zero PEXPIRETIME shift. All three slot maps retained the source owner.
+The same sharded handle, enumerator, and completion task continued binary delivery with zero losses,
+attempts, relocations, or queue drops. Registrations remained source-local; the unrelated channel's
+connection was unaffected.
+
+The fixture refused pre-existing migration histories on all three nodes, verified owned Docker
+identity/membership and the two-key budget, capability-probed commands, and never replayed the
+transaction. Connection, capability checks, cancellation, and postchecks had a 30-second deadline
+after membership preflight, within each five-minute case. No pause or debug setting was used.
+
+All four known keys were deleted, every node had zero keys/shard channels/named application clients,
+and six owned containers/two networks were removed. The record is
+`artifacts/resilience/atomic-cancellation.trx`. All 442 unit tests and 51 harness checks passed in
+Debug and Release; formatting/builds were clean and both new live cases skipped without opt-in.
+No shipping code, parser bound, dependency, or retry policy changed. The manual **Atomic migration
+cancellation** workflow was added but not dispatched.
+
+The shared-code regression passed four healthy atomic/legacy MIGRATE cases across RESP2/RESP3
+in 52.094 seconds, with zero failures or skips (`artifacts/resilience/migration-after-cancellation.trx`).
+Atomic expiration shifts remained 0 ms, legacy shifts +1 ms, and every stream relocated once with
+zero drops. Twelve additional containers and four networks were cleaned up. Existing application
+containers and networks were retained across both runs.
+
+Mid-transfer failure/late cancellation, partial-import cleanup, ambiguous EXEC outcomes, transfer-error
+reconciliation, concurrent writes, TLS, other versions, and sustained soak remain unverified by this
+run. This is not caller-token cancellation or lock-lease safety evidence. The
+[run guide](../how-to/run-atomic-cancellation-tests.md) defines the exact experiment and safety limits.
