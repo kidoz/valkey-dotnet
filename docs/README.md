@@ -48,6 +48,8 @@ Server transfer timeouts: [run isolated source-only MIGRATE IOERR tests](how-to/
 
 Duplicate copies after transfer timeout: [run isolated RESTORE acknowledgment-loss tests](how-to/run-restore-ack-loss-tests.md).
 
+Bulk partial success: [run isolated bulk MIGRATE conflict tests](how-to/run-bulk-conflict-tests.md).
+
 Repeated recovery: [run isolated resubscribe soak tests](how-to/run-resubscribe-soak-tests.md).
 
 Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).

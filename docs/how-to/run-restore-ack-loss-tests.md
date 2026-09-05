@@ -62,6 +62,7 @@ cached. Forced termination may need manual cleanup of the exact printed project;
 
 Without `VALKEYDOTNET_RUN_RESTORE_ACK_LOSS_TESTS=1` the live cases skip. The manual **RESTORE
 acknowledgment loss** workflow uploads `artifacts/resilience/restore-ack-loss.trx`. See the
-[execution record](../reference/resilience-evidence.md) for measured scope. Bulk partial success,
-concurrent mutation, TLS, other server versions, and a production conflict-resolution policy remain
-separate work. No shipping library dependency, API, or retry behavior is changed by this test utility.
+[execution record](../reference/resilience-evidence.md) for measured scope. Two-key BUSYKEY partial
+success has a [separate runner](run-bulk-conflict-tests.md); bulk IOERR, concurrent mutation, TLS,
+other server versions, and a production conflict-resolution policy remain separate work.
+No shipping library dependency, API, or retry behavior is changed by this test utility.

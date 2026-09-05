@@ -224,12 +224,7 @@ internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(expectedTargetKeys));
         }
-        if (!_created || _ports.Length != 3)
-        {
-            throw new InvalidOperationException("Migration requires this fixture's initialized three-primary profile.");
-        }
-        // Re-confirm every target immediately before fault injection, even after startup verification.
-        await DiscoverAndVerifyAsync(token);
+        var identities = await VerifyMigrationMembershipAsync(source, target, token);
         var number = slot.ToString(CultureInfo.InvariantCulture);
         Assert.Equal(
             expectedSourceKeys.ToString(CultureInfo.InvariantCulture),
@@ -239,6 +234,21 @@ internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
             expectedTargetKeys.ToString(CultureInfo.InvariantCulture),
             await CommandAsync(target, ["CLUSTER", "COUNTKEYSINSLOT", number], token)
         );
+        return identities;
+    }
+
+    private async Task<(string SourceId, string TargetId)> VerifyMigrationMembershipAsync(
+        int source,
+        int target,
+        CancellationToken token
+    )
+    {
+        if (!_created || _ports.Length != 3)
+        {
+            throw new InvalidOperationException("Migration requires this fixture's initialized three-primary profile.");
+        }
+        // Re-confirm every target immediately before fault injection, even after startup verification.
+        await DiscoverAndVerifyAsync(token);
         var sourceId = await CommandAsync(source, ["CLUSTER", "MYID"], token);
         var targetId = await CommandAsync(target, ["CLUSTER", "MYID"], token);
         var other = 3 - source - target;

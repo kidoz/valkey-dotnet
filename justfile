@@ -70,6 +70,13 @@ test-migrate-ioerr:
     -method '*OwnedMigrateIoErrorBeforeRestorePreservesSourceDataAndStream' \
     -showLiveOutput -result-trx artifacts/resilience/migrate-ioerr.trx
 
+# Reconcile a two-key MIGRATE's partial success with the conflict first and last.
+test-bulk-conflict:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_BULK_CONFLICT_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedBulkConflictReconcilesPartialSuccessWithoutReplay' \
+    -showLiveOutput -result-trx artifacts/resilience/bulk-conflict.trx
+
 # Withhold one successful RESTORE acknowledgment and independently observe both retained copies.
 test-restore-ack-loss:
     mkdir -p artifacts/resilience
