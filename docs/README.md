@@ -32,6 +32,8 @@ Cluster resilience: [run isolated primary-failover tests](how-to/run-primary-fai
 
 Migration routing: [run isolated ASK-migration tests](how-to/run-ask-migration-tests.md).
 
+Data migration: [run isolated nonempty-key transfer tests](how-to/run-key-transfer-tests.md).
+
 Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).
 
 ## Writing docs here

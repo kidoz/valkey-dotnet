@@ -55,6 +55,13 @@ test-migration $migration_cycles="3":
     -method '*OwnedSlotMigrationPreservesShardedHandleAndStream' \
     -showLiveOutput -result-trx artifacts/resilience/migration.trx
 
+# Transfer two owned binary keys and verify expiry and sharded delivery through cutover.
+test-key-transfer:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_KEY_TRANSFER_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedNonemptyMigrationPreservesBinaryKeysExpiryAndShardStream' \
+    -showLiveOutput -result-trx artifacts/resilience/key-transfer.trx
+
 # Verify native command ASK and sharded delivery during an owned legacy migration.
 test-ask:
     mkdir -p artifacts/resilience

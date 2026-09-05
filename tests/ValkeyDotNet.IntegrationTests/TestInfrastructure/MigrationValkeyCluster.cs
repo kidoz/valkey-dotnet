@@ -168,9 +168,20 @@ internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
 
     internal async Task CompleteEmptySlotMigrationAsync(int slot, int source, int target, CancellationToken token)
     {
-        var (_, targetId) = await VerifyMigrationAsync(slot, source, target, 0, token);
+        await CompleteSlotMigrationAsync(slot, source, target, 0, token);
+    }
+
+    internal async Task CompleteSlotMigrationAsync(
+        int slot,
+        int source,
+        int target,
+        int expectedTargetKeys,
+        CancellationToken token
+    )
+    {
+        var (_, targetId) = await VerifyMigrationAsync(slot, source, target, 0, token, expectedTargetKeys);
         var number = slot.ToString(CultureInfo.InvariantCulture);
-        // Both nodes are empty. Publish destination ownership before retiring the source.
+        // Source is empty; the destination may contain the bounded set of transferred keys.
         Assert.Equal("OK", await CommandAsync(target, ["CLUSTER", "SETSLOT", number, "NODE", targetId], token));
         Assert.Equal("OK", await CommandAsync(source, ["CLUSTER", "SETSLOT", number, "NODE", targetId], token));
         Assert.Equal(
@@ -185,16 +196,21 @@ internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
         int source,
         int target,
         int expectedSourceKeys,
-        CancellationToken token
+        CancellationToken token,
+        int expectedTargetKeys = 0
     )
     {
         if (slot is < 0 or > 16383 || source is < 0 or > 2 || target is < 0 or > 2 || source == target)
         {
             throw new ArgumentOutOfRangeException(nameof(slot));
         }
-        if (expectedSourceKeys is < 0 or > 1)
+        if (expectedSourceKeys is < 0 or > 2)
         {
             throw new ArgumentOutOfRangeException(nameof(expectedSourceKeys));
+        }
+        if (expectedTargetKeys is < 0 or > 2 || expectedSourceKeys + expectedTargetKeys > 2)
+        {
+            throw new ArgumentOutOfRangeException(nameof(expectedTargetKeys));
         }
         if (!_created || _ports.Length != 3)
         {
@@ -207,7 +223,10 @@ internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
             expectedSourceKeys.ToString(CultureInfo.InvariantCulture),
             await CommandAsync(source, ["CLUSTER", "COUNTKEYSINSLOT", number], token)
         );
-        Assert.Equal("0", await CommandAsync(target, ["CLUSTER", "COUNTKEYSINSLOT", number], token));
+        Assert.Equal(
+            expectedTargetKeys.ToString(CultureInfo.InvariantCulture),
+            await CommandAsync(target, ["CLUSTER", "COUNTKEYSINSLOT", number], token)
+        );
         var sourceId = await CommandAsync(source, ["CLUSTER", "MYID"], token);
         var targetId = await CommandAsync(target, ["CLUSTER", "MYID"], token);
         var other = 3 - source - target;

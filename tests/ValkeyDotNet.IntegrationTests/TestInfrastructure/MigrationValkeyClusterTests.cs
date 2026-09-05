@@ -5,7 +5,31 @@ public sealed class MigrationValkeyClusterTests
 {
     [Theory]
     [InlineData(-1)]
-    [InlineData(2)]
+    [InlineData(3)]
+    public async Task RefusesCutoverWithUnexpectedTargetKeyBudget(int expectedTargetKeys)
+    {
+        await using var cluster = new MigrationValkeyCluster();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            cluster.CompleteSlotMigrationAsync(0, 0, 1, expectedTargetKeys, TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Fact]
+    public async Task TransferKeysAreBoundedAndScopedToOwnedProject()
+    {
+        await using var cluster = new MigrationValkeyCluster();
+        byte[] valid = [.. System.Text.Encoding.UTF8.GetBytes("{" + cluster.Project + ":0}"), 0, 255, 13, 10];
+        cluster.ValidateTransferKey(valid);
+        Assert.Throws<ArgumentException>(() => cluster.ValidateTransferKey("unrelated"u8.ToArray()));
+        Assert.Throws<ArgumentException>(() => cluster.ValidateTransferKey([.. valid, .. new byte[512]]));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cluster.MigrateOwnedKeyAsync(valid, 0, 1, 2, ValkeyProtocol.Resp3, TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(3)]
     public async Task RefusesMigrationWithUnexpectedKeyBudget(int expectedSourceKeys)
     {
         await using var cluster = new MigrationValkeyCluster();

@@ -17,6 +17,9 @@
 
 ### Added
 
+- Opt-in nonempty-key migration runner and manual workflow verifying binary MIGRATE transfers,
+  expiration metadata, intermediate ASK/TRYAGAIN behavior, and same-stream sharded cutover.
+
 - Opt-in native ASK-migration runner and manual workflow covering repeated command ASK/ASKING,
   binary values, source-local sharded subscriptions during migration, and same-stream cutover.
 
