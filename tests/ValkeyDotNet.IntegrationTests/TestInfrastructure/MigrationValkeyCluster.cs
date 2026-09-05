@@ -6,21 +6,24 @@ using System.Text.Json;
 
 namespace ValkeyDotNet.IntegrationTests.TestInfrastructure;
 
-// Owns exactly three new primaries. No externally supplied project, container, network, or endpoint.
-internal sealed class MigrationValkeyCluster : IAsyncDisposable
+// Owns three new primaries and optionally one replica; never accepts an external target.
+internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
 {
+    private static readonly string[] FailoverProfile = ["--profile", "failover"];
     private readonly string _token = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
-    private readonly int[] _ports = new int[3];
-    private readonly string?[] _containers = new string?[3];
+    private readonly int[] _ports;
+    private readonly string?[] _containers;
     private string? _dockerHost;
     private bool _created;
 
-    internal MigrationValkeyCluster()
+    internal MigrationValkeyCluster(bool includeReplica = false)
     {
+        _ports = new int[includeReplica ? 4 : 3];
+        _containers = new string?[_ports.Length];
         var reservations = new List<TcpListener>();
         try
         {
-            for (var index = 0; index < 3; index++)
+            for (var index = 0; index < _ports.Length; index++)
             {
                 var listener = new TcpListener(IPAddress.Loopback, 0);
                 reservations.Add(listener);
@@ -38,7 +41,8 @@ internal sealed class MigrationValkeyCluster : IAsyncDisposable
         // Docker binds next. A collision fails creation; an existing listener is never stopped.
     }
 
-    internal string Project => "valkey-dotnet-migration-tests-" + _token;
+    internal string Project =>
+        (_ports.Length == 4 ? "valkey-dotnet-failover-tests-" : "valkey-dotnet-migration-tests-") + _token;
 
     internal static int ParseCycles(string? text)
     {
@@ -64,13 +68,13 @@ internal sealed class MigrationValkeyCluster : IAsyncDisposable
             ClientName = Project,
         };
 
-    internal ValkeyClusterOptions Options(ValkeyProtocol protocol) =>
+    internal ValkeyClusterOptions Options(ValkeyProtocol protocol, int seed = 0) =>
         new()
         {
-            SeedNodes = [NodeOptions(0, protocol)],
+            SeedNodes = [NodeOptions(seed, protocol)],
             EndpointMapper = endpoint =>
             {
-                for (var index = 0; index < 3; index++)
+                for (var index = 0; index < _ports.Length; index++)
                 {
                     if (endpoint.Host == Service(index) && endpoint.Port == 6379)
                     {
@@ -128,6 +132,10 @@ internal sealed class MigrationValkeyCluster : IAsyncDisposable
             token
         );
         await WaitHealthyAsync(token);
+        if (_ports.Length == 4)
+        {
+            await AddReplicaAsync(token);
+        }
     }
 
     internal async Task<string> CommandAsync(int node, string[] arguments, CancellationToken token)
@@ -140,14 +148,49 @@ internal sealed class MigrationValkeyCluster : IAsyncDisposable
 
     internal async Task MoveEmptySlotAsync(int slot, int source, int target, CancellationToken token)
     {
+        await BeginSlotMigrationAsync(slot, source, target, 0, token);
+        await CompleteEmptySlotMigrationAsync(slot, source, target, token);
+    }
+
+    internal async Task BeginSlotMigrationAsync(int slot, int source, int target, int expectedSourceKeys, CancellationToken token)
+    {
+        var (sourceId, targetId) = await VerifyMigrationAsync(slot, source, target, expectedSourceKeys, token);
+        var number = slot.ToString(CultureInfo.InvariantCulture);
+        Assert.Equal("OK", await CommandAsync(target, ["CLUSTER", "SETSLOT", number, "IMPORTING", sourceId], token));
+        Assert.Equal("OK", await CommandAsync(source, ["CLUSTER", "SETSLOT", number, "MIGRATING", targetId], token));
+    }
+
+    internal async Task CompleteEmptySlotMigrationAsync(int slot, int source, int target, CancellationToken token)
+    {
+        var (_, targetId) = await VerifyMigrationAsync(slot, source, target, 0, token);
+        var number = slot.ToString(CultureInfo.InvariantCulture);
+        // Both nodes are empty. Publish destination ownership before retiring the source.
+        Assert.Equal("OK", await CommandAsync(target, ["CLUSTER", "SETSLOT", number, "NODE", targetId], token));
+        Assert.Equal("OK", await CommandAsync(source, ["CLUSTER", "SETSLOT", number, "NODE", targetId], token));
+        Assert.Equal("OK", await CommandAsync(3 - source - target, ["CLUSTER", "SETSLOT", number, "NODE", targetId], token));
+        await WaitHealthyAsync(token);
+    }
+
+    private async Task<(string SourceId, string TargetId)> VerifyMigrationAsync(
+        int slot, int source, int target, int expectedSourceKeys, CancellationToken token)
+    {
         if (slot is < 0 or > 16383 || source is < 0 or > 2 || target is < 0 or > 2 || source == target)
         {
             throw new ArgumentOutOfRangeException(nameof(slot));
         }
+        if (expectedSourceKeys is < 0 or > 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(expectedSourceKeys));
+        }
+        if (!_created || _ports.Length != 3)
+        {
+            throw new InvalidOperationException("Migration requires this fixture’s initialized three-primary profile.");
+        }
         // Re-confirm every target immediately before fault injection, even after startup verification.
         await DiscoverAndVerifyAsync(token);
         var number = slot.ToString(CultureInfo.InvariantCulture);
-        Assert.Equal("0", await CommandAsync(source, ["CLUSTER", "COUNTKEYSINSLOT", number], token));
+        Assert.Equal(expectedSourceKeys.ToString(CultureInfo.InvariantCulture), await CommandAsync(source, ["CLUSTER", "COUNTKEYSINSLOT", number], token));
+        Assert.Equal("0", await CommandAsync(target, ["CLUSTER", "COUNTKEYSINSLOT", number], token));
         var sourceId = await CommandAsync(source, ["CLUSTER", "MYID"], token);
         var targetId = await CommandAsync(target, ["CLUSTER", "MYID"], token);
         var other = 3 - source - target;
@@ -170,13 +213,7 @@ internal sealed class MigrationValkeyCluster : IAsyncDisposable
                 );
             }
         }
-        Assert.Equal("OK", await CommandAsync(target, ["CLUSTER", "SETSLOT", number, "IMPORTING", sourceId], token));
-        Assert.Equal("OK", await CommandAsync(source, ["CLUSTER", "SETSLOT", number, "MIGRATING", targetId], token));
-        // No keys need MIGRATE. Publish the new owner at the destination before retiring the source.
-        Assert.Equal("OK", await CommandAsync(target, ["CLUSTER", "SETSLOT", number, "NODE", targetId], token));
-        Assert.Equal("OK", await CommandAsync(source, ["CLUSTER", "SETSLOT", number, "NODE", targetId], token));
-        Assert.Equal("OK", await CommandAsync(other, ["CLUSTER", "SETSLOT", number, "NODE", targetId], token));
-        await WaitHealthyAsync(token);
+        return (sourceId, targetId);
     }
 
     private async Task WaitHealthyAsync(CancellationToken token)
@@ -202,7 +239,7 @@ internal sealed class MigrationValkeyCluster : IAsyncDisposable
 
     private async Task DiscoverAndVerifyAsync(CancellationToken token)
     {
-        for (var index = 0; index < 3; index++)
+        for (var index = 0; index < _ports.Length; index++)
         {
             var id = (await ComposeAsync(["ps", "--all", "--quiet", Service(index)], token)).Trim();
             if (id.Length == 0)
@@ -322,6 +359,7 @@ internal sealed class MigrationValkeyCluster : IAsyncDisposable
                 Path.Combine(AppContext.BaseDirectory, "docker-compose.migration.yml"),
                 "--project-name",
                 Project,
+                .. (_ports.Length == 4 ? FailoverProfile : Array.Empty<string>()),
                 .. arguments,
             ],
             token
@@ -345,7 +383,8 @@ internal sealed class MigrationValkeyCluster : IAsyncDisposable
             process.StartInfo.ArgumentList.Add(argument);
         }
         process.StartInfo.Environment["VALKEYDOTNET_MIGRATION_TOKEN"] = _token;
-        for (var index = 0; index < 3; index++)
+        process.StartInfo.Environment.Remove("COMPOSE_PROFILES");
+        for (var index = 0; index < _ports.Length; index++)
         {
             process.StartInfo.Environment[
                 "VALKEYDOTNET_MIGRATION_PORT_" + (index + 1).ToString(CultureInfo.InvariantCulture)

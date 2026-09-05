@@ -33,6 +33,11 @@ services:
     <<: *node
     hostname: node-3
     ports: ["127.0.0.1:${VALKEYDOTNET_MIGRATION_PORT_3:?}:6379"]
+  node-4:
+    <<: *node
+    profiles: ["failover"]
+    hostname: node-4
+    ports: ["127.0.0.1:${VALKEYDOTNET_MIGRATION_PORT_4:-0}:6379"]
 
 networks:
   default:

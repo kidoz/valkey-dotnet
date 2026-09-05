@@ -28,6 +28,8 @@ Pub/Sub: [Subscribe to messages](how-to/subscribe-to-messages.md) and
 Sharded Pub/Sub: [cluster subscriber reference](reference/cluster-subscriber.md) and
 [run isolated slot-migration tests](how-to/run-slot-migration-tests.md).
 
+Cluster resilience: [run isolated primary-failover tests](how-to/run-primary-failover-tests.md).
+
 Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).
 
 ## Writing docs here

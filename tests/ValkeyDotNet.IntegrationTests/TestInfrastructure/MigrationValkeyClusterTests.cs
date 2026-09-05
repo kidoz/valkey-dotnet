@@ -4,6 +4,43 @@ namespace ValkeyDotNet.IntegrationTests.TestInfrastructure;
 public sealed class MigrationValkeyClusterTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RefusesPrimaryStopBeforeOwnedReplicaInitialization(bool includeReplica)
+    {
+        await using var cluster = new MigrationValkeyCluster(includeReplica);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cluster.StopOwnedPrimaryAsync(TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Fact]
+    public async Task ReplicaProfileMapsFourthNodeAndKeepsSeedSelectionExplicit()
+    {
+        await using var cluster = new MigrationValkeyCluster(includeReplica: true);
+        Assert.Equal(
+            cluster.NodeOptions(1, ValkeyProtocol.Resp3).Port,
+            Assert.Single(cluster.Options(ValkeyProtocol.Resp3, seed: 1).SeedNodes).Port
+        );
+        var mapped = cluster
+            .Options(ValkeyProtocol.Resp3, seed: 1)
+            .EndpointMapper!(new ValkeyClusterEndpoint("node-4", 6379));
+        Assert.Equal(cluster.NodeOptions(3, ValkeyProtocol.Resp3).Port, mapped.Port);
+        Assert.StartsWith("valkey-dotnet-failover-tests-", cluster.Project, StringComparison.Ordinal);
+        Assert.Equal(
+            4,
+            Enumerable
+                .Range(0, 4)
+                .Select(index => cluster.NodeOptions(index, ValkeyProtocol.Resp3).Port)
+                .Distinct()
+                .Count()
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            cluster.Options(ValkeyProtocol.Resp3).EndpointMapper!(new ValkeyClusterEndpoint("node-5", 6379))
+        );
+    }
+
+    [Theory]
     [InlineData("0")]
     [InlineData("-1")]
     [InlineData("21")]

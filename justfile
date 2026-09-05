@@ -55,6 +55,13 @@ test-migration $migration_cycles="3":
     -method '*OwnedSlotMigrationPreservesShardedHandleAndStream' \
     -showLiveOutput -result-trx artifacts/resilience/migration.trx
 
+# Stop an owned primary and verify replica promotion with healthy and unavailable discovery seeds.
+test-failover:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_FAILOVER_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedPrimaryFailoverPreservesShardedStream' \
+    -showLiveOutput -result-trx artifacts/resilience/failover.trx
+
 # Start every supported Valkey line and wait until each is healthy.
 valkey-up:
     docker compose -f {{ compose }} up -d --wait

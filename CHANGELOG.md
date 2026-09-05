@@ -17,6 +17,8 @@
 
 ### Added
 
+- Opt-in four-node primary-failover runner covering RESP2/RESP3 stream recovery with healthy and
+  unavailable discovery seeds, replica-readiness/membership checks, and a manual Primary failover workflow.
 - Opt-in owned three-primary slot-migration runner, bounded RESP2/RESP3 same-stream recovery checks,
   random loopback ports, ownership-verified cleanup, and a manual Slot migration workflow.
   Live execution remains explicitly opt-in.
