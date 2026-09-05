@@ -20,6 +20,13 @@ complete `CLUSTER SHARDS` response supplies the initial 16,384-slot primary map.
 rejects `CLUSTER SHARDS`, discovery falls back to `CLUSTER SLOTS`. The connected seed is retained;
 connections to other primaries are opened lazily and reused.
 
+SHARDS discovery skips primaries marked `fail` or `loading`, so a failed former master is not
+selected ahead of its promoted online replacement. Missing health is accepted for compatibility;
+unknown health is rejected. Initial discovery and explicit refresh reject a map with no available
+primary for a shard rather than installing it. Only opt-in
+[sharded subscription recovery](cluster-subscriber.md#established-subscription-recovery) retries
+unavailable-primary discovery within its existing recovery budget; command writes are not replayed.
+
 ```csharp
 public ValueTask DisposeAsync()
 ```

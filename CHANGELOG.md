@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Cluster discovery skips failed/loading former primaries when a promoted primary is available.
+  Opt-in subscription recovery waits within its existing budget while no primary is available;
+  ordinary command transport failures are still not replayed.
+
 - Separate subscriber acknowledgement deadlines/caller cancellation from reader shutdown. Pending
   completions report terminal loss or disposal; socket disposal still interrupts outstanding I/O.
   Add cross-mode disposal, cancellation, and deadline regression coverage.

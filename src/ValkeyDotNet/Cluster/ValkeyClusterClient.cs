@@ -835,14 +835,15 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
             return ParseSlotsTopology(response, source, options);
         }
 
-        return ParseShardsTopology(response, source, options, useTls);
+        return ParseShardsTopology(response, source, options, useTls, subscriptionRecovery);
     }
 
     private static ClusterEndpoint?[] ParseShardsTopology(
         RespValue response,
         ClusterEndpoint source,
         ValkeyClusterOptions options,
-        bool useTls
+        bool useTls,
+        bool subscriptionRecovery
     )
     {
         try
@@ -853,10 +854,13 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
                 var shard = ReadMapLike(shardValue, "CLUSTER SHARDS shard");
                 var ranges = RequireField(shard, "slots", "CLUSTER SHARDS shard").AsArray();
                 if (ranges.Count == 0 || ranges.Count % 2 != 0)
+                {
                     throw new ValkeyClusterException("CLUSTER SHARDS returned an invalid slot-range list.");
+                }
 
                 var nodes = RequireField(shard, "nodes", "CLUSTER SHARDS shard").AsArray();
                 ClusterEndpoint? primary = null;
+                var unavailablePrimary = false;
                 foreach (var nodeValue in nodes)
                 {
                     var node = ReadMapLike(nodeValue, "CLUSTER SHARDS node");
@@ -865,7 +869,21 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
                         !string.Equals(role, "master", StringComparison.OrdinalIgnoreCase)
                         && !string.Equals(role, "primary", StringComparison.OrdinalIgnoreCase)
                     )
+                    {
                         continue;
+                    }
+
+                    var health = ReadOptionalString(FindField(node, "health"));
+                    if (health is not null && !string.Equals(health, "online", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (health is not ("fail" or "loading"))
+                        {
+                            throw new ValkeyClusterException("CLUSTER SHARDS returned an unknown primary health.");
+                        }
+                        // A failed former primary can remain a master beside the promoted replica.
+                        unavailablePrimary = true;
+                        continue;
+                    }
 
                     var host = FirstUsableEndpoint(
                         ReadOptionalString(FindField(node, "endpoint")),
@@ -877,19 +895,34 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
                         ? FindField(node, "tls-port") ?? FindField(node, "port")
                         : FindField(node, "port");
                     if (portField is null)
+                    {
                         throw new ValkeyClusterException("CLUSTER SHARDS returned a primary with no port.");
+                    }
                     var port = portField.AsInt64();
                     if (port is < 1 or > 65535)
+                    {
                         throw new ValkeyClusterException($"CLUSTER SHARDS returned the invalid primary port {port}.");
+                    }
                     primary = CreateAnnouncedEndpoint(options, host, (int)port);
                     break;
                 }
 
                 if (primary is null)
+                {
+                    if (unavailablePrimary && subscriptionRecovery)
+                    {
+                        throw new ValkeyConnectionException(
+                            "No available primary was advertised during subscriber discovery.",
+                            new IOException("Cluster promotion may still be pending.")
+                        );
+                    }
                     throw new ValkeyClusterException("CLUSTER SHARDS returned a shard with no primary node.");
+                }
 
                 for (var index = 0; index < ranges.Count; index += 2)
+                {
                     AssignRange(slots, ReadSlot(ranges[index]), ReadSlot(ranges[index + 1]), primary.Value, "SHARDS");
+                }
             }
 
             EnsureCompleteTopology(slots, "SHARDS");
