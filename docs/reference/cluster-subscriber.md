@@ -142,6 +142,13 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [atomic slot-migration runner](../how-to/run-atomic-migration-tests.md) passed RESP2/RESP3 on
+Valkey 9.1.2 on 2026-09-05. Correlated EXPORT/IMPORT jobs completed successfully; two binary strings
+retained exact values and absolute expiration metadata. The same stream relocated once with zero
+drops; slot maps, source/destination registrations, unrelated-channel isolation, and cleanup passed.
+This is healthy quiescent migration, not migration-failure or concurrent-write evidence. See the
+[execution record](resilience-evidence.md#atomic-slot-migration--2026-09-05).
+
 The [nonempty-key migration runner](../how-to/run-key-transfer-tests.md) passed RESP2/RESP3 on
 Valkey 9.1.2 on 2026-09-05. Two binary keys per case moved with MIGRATE while sharded delivery
 remained on the source; cutover preserved the same stream and produced one relocation with zero
@@ -216,5 +223,5 @@ This live success is separate from overall unit-suite readiness: immediate-close
 and rejection regressions failed intermittently during that verification session. A subsequent
 shutdown-isolation change passed the expanded unit suite and repeated runs. See
 [subscriber verification evidence](subscriber.md#verification-evidence).
-Atomic slot migration, transfer-failure reconciliation, TLS recovery, prolonged soak, and performance
+Atomic migration failure/cancellation, transfer-failure reconciliation, TLS recovery, prolonged soak, and performance
 evidence remain separate work.

@@ -228,3 +228,41 @@ This is healthy single-key MIGRATE coverage for two strings per case. Bulk KEYS 
 types, BUSYKEY/IOERR reconciliation, atomic migration, live TLS, cross-version faults, lock safety,
 and prolonged soak remain separate evidence requirements. The
 [run guide](../how-to/run-key-transfer-tests.md) defines the exact experiment and cleanup limits.
+
+## Atomic slot migration — 2026-09-05
+
+`just test-atomic-migration` passed both Release RESP2/RESP3 cases on Valkey 9.1.2 in 25.664 seconds,
+with zero failures or skips. Each fresh three-primary cluster atomically moved one slot containing
+two binary strings: a 4 KiB expiring value and a small persistent value. The host was macOS arm64,
+SDK 10.0.400 and .NET 10.0.11; each node used a 128 MiB/one-CPU cap, without TLS.
+
+Both source EXPORT and destination IMPORT jobs reached `success` with the same job identity,
+verified node IDs, and exact single-slot range. RESP2 field arrays and RESP3 maps both passed.
+The runner capability-probes the commands, refuses pre-existing jobs, sends MIGRATESLOTS once,
+and polls under a 45-second deadline after membership preflight. Initial `OK` is not completion;
+failed/cancelled jobs and unexpected identities fail without command replay. These checks follow
+the [migration initiation contract](https://valkey.io/commands/cluster-migrateslots/) and
+[job status contract](https://valkey.io/commands/cluster-getslotmigrations/).
+
+Both cases verified exact destination key placement, empty source slot, agreement of all three
+slot maps, byte-preserved values, positive expiring TTL, persistent PTTL=-1, and **zero milliseconds**
+of PEXPIRETIME shift. The same sharded handle, enumerator, and completion task survived one loss,
+one attempt, and one successful relocation with zero drops. Source/destination registrations,
+resumed binary delivery, and the unrelated channel's unchanged connection passed.
+
+All four test keys were deleted. Every node had zero keys, shard channels, and named application
+connections before cleanup removed six owned containers and two networks. Evidence is
+`artifacts/resilience/atomic-migration.trx`. All 442 unit tests and 40 harness checks passed in both
+Debug and Release; both live cases skipped without opt-in. No shipping API, parser bounds, runtime
+dependencies, or retry policy changed. The manual **Atomic slot migration** workflow was added,
+not dispatched.
+
+The shared-test legacy MIGRATE regression passed both protocols in 30.408 seconds, preserving
+ASK/TRYAGAIN checks, +1 ms expiry shifts, and one relocation with zero drops. Its six additional
+containers and two networks were cleaned up. Record: `artifacts/resilience/key-transfer-after-atomic.trx`.
+The existing application containers and networks remained unchanged across both runs.
+
+This is healthy completion evidence for one quiescent slot and two strings, not concurrent-write
+atomicity, migration cancellation/failure recovery, other types or large datasets, cross-version
+faults, TLS, lock-lease correctness, lossless Pub/Sub, performance, or prolonged soak. The
+[run guide](../how-to/run-atomic-migration-tests.md) specifies the safety and cleanup limits.
