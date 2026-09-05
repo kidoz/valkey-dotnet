@@ -230,6 +230,17 @@ cluster-down:
 bench *args:
     dotnet run -c Release --project {{ benchmarks }} -- {{ args }}
 
+# Verify all real-server workloads using fresh owned standalone containers (no timing assertions).
+test-roundtrip-workloads:
+    mkdir -p artifacts/performance
+    VALKEYDOTNET_RUN_ROUNDTRIP_TESTS=1 dotnet run -c Release --project {{ integration_tests }} -- \
+    -method '*OwnedRoundTripWorkloadsPreserveBinaryDataAndLockOutcomes' \
+    -showLiveOutput -result-trx artifacts/performance/roundtrip-workloads.trx
+
+# Fixed, bounded real-server profile: RESP2/RESP3, 1/8 callers, 1 KiB values, one owned server.
+bench-roundtrips:
+    dotnet run -c Release --project {{ benchmarks }} -- --roundtrips
+
 # Format all C# and project files with CSharpier.
 format: tools
     dotnet csharpier format .

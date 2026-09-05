@@ -3,6 +3,18 @@
         <AssemblyName>ValkeyDotNet.IntegrationTests</AssemblyName>
     </PropertyGroup>
     <ItemGroup>
+        <Compile
+            Include="../../benchmarks/ValkeyDotNet.Benchmarks/RoundTripWorkload.cs"
+            Link="TestInfrastructure/RoundTripWorkload.cs"
+        />
+        <Compile
+            Include="../../benchmarks/ValkeyDotNet.Benchmarks/RoundTripMeasurement.cs"
+            Link="TestInfrastructure/RoundTripMeasurement.cs"
+        />
+        <Compile
+            Include="../../benchmarks/ValkeyDotNet.Benchmarks/OwnedBenchmarkServer.cs"
+            Link="TestInfrastructure/OwnedBenchmarkServer.cs"
+        />
         <ProjectReference
             Include="../../dev/ValkeyDotNet.MigrationRelay/ValkeyDotNet.MigrationRelay.csproj"
             ReferenceOutputAssembly="false"

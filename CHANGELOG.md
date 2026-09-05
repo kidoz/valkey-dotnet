@@ -17,6 +17,10 @@
 
 ### Added
 
+- Bounded standalone cache/lock round-trip benchmark profile and manual workflow: RESP2/RESP3,
+  one/eight callers, request latency percentiles, throughput, process-wide managed allocations,
+  raw samples, owned-container cleanup, and separate live workload correctness tests.
+
 - Opt-in atomic cutover writer runner and manual workflow: observe two exact writers blocked
   during migration write pause, then verify acknowledgments, binary values, expiration, and original
   sharded streams after handoff, with bounded cleanup and explicit failure-outcome accounting.

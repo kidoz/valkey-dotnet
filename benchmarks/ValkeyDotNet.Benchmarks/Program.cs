@@ -4,5 +4,14 @@ namespace ValkeyDotNet.Benchmarks;
 
 public static class Program
 {
-    public static void Main(string[] args) => BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
+    public static async Task Main(string[] args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        if (args.Length == 1 && args[0] == "--roundtrips")
+        {
+            await RoundTripBenchmarks.RunAsync();
+            return;
+        }
+        BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
+    }
 }
