@@ -3,6 +3,50 @@
 This page separates implemented experiments from executed evidence. It is not a cache/lock
 production-readiness certification.
 
+## RESTORE acknowledgment loss — 2026-09-05
+
+`just test-restore-ack-loss` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 33.285 seconds,
+with no failures or skips. Each case used a fresh owned three-primary cluster and one test-only
+.NET relay on local Docker. Primaries had 128 MiB/one CPU each and DEBUG disabled; the relay had
+64 MiB/one CPU, no published ports or capabilities, a read-only filesystem, and a non-root user.
+The Release client ran on macOS arm64 with SDK 10.0.400/.NET 10.0.11; containers ran Linux aarch64
+without TLS. The pinned runtime image and isolation controls are in the
+[runner guide](../how-to/run-restore-ack-loss-tests.md).
+
+One binary key with a 4 KiB value and initial 120-second TTL started only at the source. The relay
+forwarded SELECT 0 and one exact RESTORE-ASKING, received the real destination success reply,
+and withheld it while keeping the sender socket open until the source's two-second idle timeout.
+Its fixed phase log and zero exit status confirmed success before acknowledgment loss. The source
+returned `ValkeyServerException`, `ErrorCode=IOERR`, `DeliveryStatus=ReplyReceived`, remained usable
+for PING, and reported exactly one MIGRATE call. There was no application replay or server retry.
+
+Two independent node-local reconciliation observations found the exact binary key and value at
+both nodes. Source absolute expiration shifted by zero; destination absolute expiration differed
+from source by +12 ms for RESP2 and +11 ms for RESP3, within the relative-TTL transfer tolerance,
+and remained stable between observations. Each importing-node read used a fresh ASKING. All slot
+maps and routed reads remained source-owned. Original source-local and stationary sharded handles,
+completion tasks, and enumerators survived, delivered binary messages, and reported zero connection
+losses, reconnect attempts, relocations, or local drops. No overwrite, cutover, or winner selection ran.
+
+This separately establishes the duplicate-copy outcome allowed by the
+[MIGRATE contract](https://valkey.io/commands/migrate/); the earlier source-only and client-facing
+reply-loss experiments do not establish it. It is a single-key, no-concurrent-writer observation,
+not bulk partial success, live TLS, other-version evidence, or a production conflict-resolution
+policy. The source stalls during synchronous MIGRATE; post-fault delivery is not a latency guarantee.
+
+The relay was removed under independent cleanup before copy reconciliation. Final teardown removed
+only the two known fixture copies, verified zero keys/shard channels/named clients, and removed all
+eight owned containers/two networks. The artifact is `artifacts/resilience/restore-ack-loss.trx`.
+The manual workflow was added but not dispatched. No shipping library API, dependency, or retry
+behavior changed.
+
+All 442 unit tests and 136 server-free harness checks passed in Debug/Release, `just ci` passed,
+and both new live cases skipped without opt-in. The shared BUSYKEY/source-only IOERR regression
+passed four RESP2/RESP3 cases in 58.565 seconds, with retained source expiration and zero drops
+(`artifacts/resilience/reconciliation-after-restore-ack-loss.trx`). Across both live runs, twenty
+owned containers and six networks were removed. The before/after Docker inventory retained all
+existing containers/networks, with the three hostloom services healthy. Cached images remain.
+
 ## Source-only MIGRATE IOERR — 2026-09-05
 
 `just test-migrate-ioerr` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 31.145 seconds, with no

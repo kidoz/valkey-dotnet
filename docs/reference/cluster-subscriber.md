@@ -142,6 +142,14 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [RESTORE acknowledgment-loss runner](../how-to/run-restore-ack-loss-tests.md) passed RESP2/RESP3
+on Valkey 9.1.2 on 2026-09-05. A relay withheld one confirmed destination success reply until source
+MIGRATE returned IOERR. Independent observations found both intact binary copies with stable expiry;
+source maps and original streams were preserved with zero losses/attempts/relocations/drops. No
+replay, overwrite, cutover, or production conflict policy ran. This is single-key duplicate-copy
+evidence, not bulk partial success, concurrent mutation, or uninterrupted publishing during the
+source stall. See the [execution record](resilience-evidence.md#restore-acknowledgment-loss--2026-09-05).
+
 The [source-only MIGRATE IOERR runner](../how-to/run-migrate-ioerr-tests.md) passed RESP2/RESP3
 on Valkey 9.1.2 on 2026-09-05. A blocked destination restore caused one received IOERR; its socket
 closed before unpause, and independent reads confirmed unchanged source data and an empty target.
