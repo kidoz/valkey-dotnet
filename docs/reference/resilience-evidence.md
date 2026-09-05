@@ -46,5 +46,13 @@ containers were removed with zero keys remaining; existing containers were uncha
 [tracking evidence and limits](client-tracking.md#live-tracking-matrix--2026-09-05).
 Tracking server restart, partitions, live TLS, and prolonged soak remain unverified.
 
+Sharded Pub/Sub passed two live RESP2/RESP3 cases on 2026-09-05 against a fresh three-primary
+Valkey 9.1.2 cluster. Binary delivery across all three slot ranges, independent duplicate handles,
+final unsubscription, zero drops, and publisher isolation passed. Ownership-checked cleanup removed
+only the three test containers and their network. This was a routing/lifecycle check, not a fault
+experiment. Concurrent verification work also reproduced intermittent subscriber acknowledgement/
+remote-close unit failures; overall suite readiness remains open. See the
+[sharded verification scope](cluster-subscriber.md#verification-scope).
+
 See [Run isolated restart tests](../how-to/run-resilience-tests.md) for the experiment's safety and
 cleanup contract.

@@ -91,5 +91,16 @@ deadlines, and disposal. These tests do not establish live cluster compatibility
 The live `ShardedPubSubRoutesAcrossThreePrimariesWithIndependentDuplicateHandles` cases are gated by
 `VALKEYDOTNET_CLUSTER_ENDPOINTS` and optional `VALKEYDOTNET_CLUSTER_MAPPED_HOST`. They exercise
 RESP2/RESP3 channels covering three primary slot ranges, SPUBLISH, binary payloads, independent
-duplicate handles, and final unsubscription. They have not been executed as part of this change.
+duplicate handles, and final unsubscription. Both cases passed locally on 2026-09-05 against a fresh
+three-primary Valkey 9.1.2 cluster, with no failures or skips. Announced node hostnames were mapped
+to localhost-published ports. The host was macOS arm64 with SDK 10.0.400 and runtime .NET 10.0.11;
+servers ran Linux aarch64 without TLS. Each node had a 128 MiB memory limit and one CPU budget.
+All 16,384 slots were healthy before testing. Afterward every node had zero keys, no shard channels,
+and no remaining application client connections. All three owned containers and their network were
+removed after ownership-label checks; existing containers were untouched. The local result is
+`artifacts/resilience/sharded-mto9sn1m/sharded.trx`.
+
+This live success is separate from overall unit-suite readiness: immediate-close acknowledgement
+and rejection regressions still failed intermittently during the same verification session. See
+[subscriber verification evidence](subscriber.md#verification-evidence).
 Live failover, slot migration, TLS recovery, prolonged soak, and performance evidence remain separate work.
