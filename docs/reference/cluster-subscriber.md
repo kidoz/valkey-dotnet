@@ -76,6 +76,14 @@ remains terminal. The node-level `ValkeySubscriber` alone does not follow ASK.
 `RefreshTopologyAsync` changes routing for future subscriptions only; it does not move, duplicate,
 or recreate existing streams.
 
+Native Valkey legacy migration does not normally issue ASK for SSUBSCRIBE/SPUBLISH: sharded
+channels remain on the source until SETSLOT NODE completes ownership transfer. Subscriber ASK
+handling is defensive compatibility behavior, verified through scripted loopback replies. The
+[native routing source](https://github.com/valkey-io/valkey/blob/9.1/src/cluster.c#L1126-L1139)
+distinguishes this from missing-key command ASK; the
+[ASK-migration runner](../how-to/run-ask-migration-tests.md) checks both behaviors without fabricating
+subscriber redirects.
+
 ## Established subscription recovery
 
 Set `EnableTopologyRecovery = true` to keep the same handle, enumerator, bounded queue, and
@@ -133,6 +141,12 @@ the cluster subscriber cancels acquisition, closes every retained stream, and di
 connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
+
+On 2026-09-05, the native ASK-migration cases passed RESP2/RESP3 on Valkey 9.1.2: repeated key-command
+ASK/ASKING, binary values, unchanged routing during migration, source-local existing/new shard
+registrations, and same-stream relocation after cutover. This supplies native migration behavior
+evidence, not live subscriber-ASK injection or nonempty-key transfer. See the
+[execution record](resilience-evidence.md#native-ask-migration--2026-09-05).
 
 The [isolated primary-failover runner](../how-to/run-primary-failover-tests.md) passed four cases on
 Valkey 9.1.2 on 2026-09-05: RESP2/RESP3 with a healthy seed and with the stopped primary as the only
@@ -195,5 +209,5 @@ This live success is separate from overall unit-suite readiness: immediate-close
 and rejection regressions failed intermittently during that verification session. A subsequent
 shutdown-isolation change passed the expanded unit suite and repeated runs. See
 [subscriber verification evidence](subscriber.md#verification-evidence).
-Nonempty/atomic slot migration, forced ASK, TLS recovery, prolonged soak, and performance
+Nonempty/atomic slot migration, TLS recovery, prolonged soak, and performance
 evidence remain separate work.

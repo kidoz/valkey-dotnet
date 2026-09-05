@@ -144,3 +144,42 @@ all original application project-network IDs remained.
 This verifies a single primary crash per case, not forced ASK, nonempty/atomic migration, partitions,
 DNS failure, live TLS, other server versions, lock safety through failover, or prolonged resubscribe
 soak. The [run guide](../how-to/run-primary-failover-tests.md) defines opt-in and cleanup controls.
+
+## Native ASK migration — 2026-09-05
+
+`just test-ask` passed RESP2/RESP3 against two fresh owned Valkey 9.1.2 three-primary clusters
+(26.711 seconds total, no failures or skips). Host/runtime were macOS arm64, SDK 10.0.400 and
+.NET 10.0.11; servers ran without TLS. Each node was limited to 128 MiB and one CPU.
+
+The test held one slot in legacy IMPORTING/MIGRATING state with one binary key retained on the
+source. Direct probes observed ASK at the source for the absent second key and MOVED at the
+destination without ASKING. Each cluster client then completed SET/GET/GET for the second binary
+key with exactly three additional source ASK errors and no additional destination MOVED errors,
+demonstrating repeated ASKING and unchanged routing. A direct ASKING/GET pipeline succeeded and
+the following unflagged GET was rejected, verifying one-shot admission. The retained source key
+remained readable and all three topology views retained the source owner during migration.
+
+Existing and newly established sharded subscriptions remained registered on the source, and the
+original stream delivered without connection loss before cutover. After deleting the two known
+test keys and verifying both nodes empty, destination-first cutover produced one loss, one attempt,
+one recovery/relocation, and zero queue drops per original handle. The same enumerator and completion
+task survived; binary delivery resumed, one destination registration replaced the source registration,
+and the unrelated channel retained its connection. No runtime changes were needed for this increment.
+
+This corrects the earlier blanket “live forced ASK outstanding” label: native command ASK now has
+live evidence, but native sharded Pub/Sub stays on its source until cutover and does not naturally
+exercise subscriber ASK. The server implementation explicitly distinguishes these paths in its
+[routing logic](https://github.com/valkey-io/valkey/blob/9.1/src/cluster.c#L1126-L1139). Subscriber ASK
+remains scripted compatibility coverage, not a claim that Valkey emitted that redirect live.
+
+The initial record is `artifacts/resilience/ask-migration.trx`. A final run added an explicit zero
+Pub/Sub ASK-error assertion and reran both ASK cases plus both three-cycle migration cases: all four
+passed in 63.385 seconds (`artifacts/resilience/ask-and-migration.trx`). All 442 unit tests passed in
+Debug and Release; 17 harness checks passed, and both new cases skipped without opt-in.
+Cleanup verified zero keys, shard channels, and named application connections, then removed all
+18 owned containers and six networks across both runs. Cached images and pre-existing application
+resources were retained. The manual **ASK migration** workflow was added but not dispatched.
+
+Nonempty-key MIGRATE, atomic migration, cross-version ASK behavior, live TLS, partitions, lock safety,
+and long-duration soak remain unverified. These elapsed totals are test durations, not latency
+benchmarks. The [run guide](../how-to/run-ask-migration-tests.md) specifies safety and cleanup limits.
