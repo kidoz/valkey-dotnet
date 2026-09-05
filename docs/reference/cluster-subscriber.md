@@ -142,6 +142,15 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [bulk MIGRATE conflict runner](../how-to/run-bulk-conflict-tests.md) passed all four RESP2/RESP3
+and batch-order cases on Valkey 9.1.2 on 2026-09-05. One key moved despite the batch's received
+BUSYKEY error; both copies of the conflicting key retained their distinct values and TTL semantics.
+Independent placement checks, ASK/TRYAGAIN, and source-owned slot maps were verified. Original
+source-local and stationary streams survived with zero losses/attempts/relocations/drops, without
+replay, overwrite, or cutover. This is two-key received-conflict evidence, not bulk IOERR, concurrent
+mutation, or a production winner policy. See the
+[execution record](resilience-evidence.md#bulk-migrate-partial-success--2026-09-05).
+
 The [RESTORE acknowledgment-loss runner](../how-to/run-restore-ack-loss-tests.md) passed RESP2/RESP3
 on Valkey 9.1.2 on 2026-09-05. A relay withheld one confirmed destination success reply until source
 MIGRATE returned IOERR. Independent observations found both intact binary copies with stable expiry;

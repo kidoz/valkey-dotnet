@@ -27,7 +27,7 @@ Exception
 |---|---|
 | `NotSent` | The client proved no command bytes were written. |
 | `MayHaveBeenSent` | The command may have reached Valkey. Do not blindly retry a mutation. |
-| `ReplyReceived` | Valkey returned a complete reply. This describes transport completion, not whether a script made changes before returning an error. |
+| `ReplyReceived` | Valkey returned a complete reply. This describes transport completion, not whether a command or script made changes before returning an error. |
 
 ## `ValkeyException`
 
@@ -71,6 +71,11 @@ catch (ValkeyServerException exception) when (exception.ErrorCode == "WRONGTYPE"
 
 Does **not** invalidate the connection: an error reply is a well-formed, fully consumed frame, so the
 client stays usable. Its delivery status is `ReplyReceived`.
+
+For example, a bulk MIGRATE can report a destination BUSYKEY error while another key in the same
+batch successfully moves. Error receipt does not imply all-key rollback or authorize replay of the
+batch. The [two-key partial-success record](resilience-evidence.md#bulk-migrate-partial-success--2026-09-05)
+documents independent per-key placement checks in both batch orders.
 
 Thrown by `ExecuteAsync` and the convenience methods. **Not** thrown by `ExecutePipelineAsync`, which
 returns errors in place — call `ThrowIfError()` on each reply.

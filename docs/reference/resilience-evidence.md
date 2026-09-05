@@ -3,6 +3,48 @@
 This page separates implemented experiments from executed evidence. It is not a cache/lock
 production-readiness certification.
 
+## Bulk MIGRATE partial success — 2026-09-05
+
+`just test-bulk-conflict` passed four cases on Valkey 9.1.2 in 52.675 seconds, with no failures or
+skips: RESP2/RESP3, each with the conflict first and last in a two-key batch. Each case used a fresh
+owned three-primary local Docker cluster, capped at 128 MiB/one CPU per node with DEBUG disabled.
+The Release client ran on macOS arm64 with SDK 10.0.400/.NET 10.0.11; servers ran Linux aarch64
+without TLS. No relay, debug hook, or network fault was used.
+
+The source started with an expiring 4 KiB binary value and a persistent five-byte value in one slot.
+The target held a different five-byte value for the second key, with a 90-second TTL. One two-key
+MIGRATE without COPY/REPLACE returned outer ERR containing BUSYKEY and `DeliveryStatus=ReplyReceived`.
+The same physical client subsequently passed PING and binary ECHO; command statistics confirmed
+exactly one MIGRATE call. Source/target key and database counts changed from 2/1 to 1/2 in both orders.
+
+Independent observations found the successful key only at the target, and both conflicting copies
+unchanged. The moved key's absolute expiration shifted +1 ms in all four cases and stayed stable
+between observations; the target conflict's expiration shifted zero and the source conflict stayed
+persistent. Direct source GET for the moved key returned ASK, routed GET found the moved value,
+routed conflict GET still saw the source copy, and mixed-key MGET returned TRYAGAIN. All slot maps
+remained source-owned. Original source-local and stationary sharded streams, completion tasks, and
+enumerators survived with zero losses, attempts, relocations, or local drops.
+
+This is received-error partial success, consistent with the per-key reply handling in the
+[Valkey 9.1.2 implementation](https://github.com/valkey-io/valkey/blob/9.1.2/src/cluster.c#L579-L619),
+not an all-key rollback or production conflict-resolution policy. No batch replay, overwrite, or
+cutover ran. Bulk IOERR/reply-loss ambiguity, concurrent writers, larger batches, other data types,
+TLS, other versions, and lock-lease correctness remain separate evidence gaps.
+
+Cleanup deleted only the three known fixture copies, verified zero keys/shard channels/named clients,
+and removed all twelve owned containers/four networks. Evidence: `artifacts/resilience/bulk-conflict.trx`.
+All 442 unit tests and 146 server-free harness checks passed Debug/Release, `just ci` passed, and the
+four new live cases skipped without opt-in. The manual workflow was added but not dispatched.
+No shipping API, dependency, parser limit, or retry behavior changed; ordinary migration helpers
+retain their two-copy bound. See the [runner controls](../how-to/run-bulk-conflict-tests.md).
+
+The shared membership-check regression passed four RESP2/RESP3 successful legacy-transfer and
+single-key BUSYKEY cases in 59.026 seconds (`artifacts/resilience/migration-after-bulk-conflict.trx`).
+Successful transfers retained the same stream through one relocation, with 0 ms/+1 ms expiry shifts;
+conflict cases preserved source-local streams and expirations. All reported zero drops. Across both
+live runs, twenty-four owned containers/eight networks were removed; all pre-existing Docker
+containers/networks remained and the three hostloom services stayed healthy. No commit was made.
+
 ## RESTORE acknowledgment loss — 2026-09-05
 
 `just test-restore-ack-loss` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 33.285 seconds,
