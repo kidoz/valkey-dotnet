@@ -17,6 +17,10 @@
 
 ### Added
 
+- Opt-in source-only MIGRATE IOERR runner and manual workflow: observe a blocked destination
+  restore, require transfer-socket closure before unpause, independently reconcile placement,
+  and preserve data/expiration and RESP2/RESP3 streams without replay or cutover.
+
 - Opt-in MIGRATE BUSYKEY runner and manual workflow: verify a wrapped destination conflict,
   preserved binary copies/expirations, one migration attempt, reusable command connection, and
   unchanged RESP2/RESP3 sharded streams without overwrite, replay, or cutover.

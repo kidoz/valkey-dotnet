@@ -44,6 +44,8 @@ Ambiguous transfer results: [run isolated MIGRATE reply-loss tests](how-to/run-m
 
 Destination conflicts: [run isolated MIGRATE BUSYKEY tests](how-to/run-busykey-tests.md).
 
+Server transfer timeouts: [run isolated source-only MIGRATE IOERR tests](how-to/run-migrate-ioerr-tests.md).
+
 Repeated recovery: [run isolated resubscribe soak tests](how-to/run-resubscribe-soak-tests.md).
 
 Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).

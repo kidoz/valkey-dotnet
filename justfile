@@ -63,6 +63,13 @@ test-resubscribe-soak $resubscribe_cycles="30":
     -method '*OwnedResubscribeSoakPreservesStreamsAndBoundsSettledResources' \
     -showLiveOutput -result-trx artifacts/resilience/resubscribe-soak.trx
 
+# Hold destination writes until one MIGRATE times out, then independently reconcile source-only placement.
+test-migrate-ioerr:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_MIGRATE_IOERR_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedMigrateIoErrorBeforeRestorePreservesSourceDataAndStream' \
+    -showLiveOutput -result-trx artifacts/resilience/migrate-ioerr.trx
+
 # Reject one conflicting transfer and preserve both owned copies without REPLACE or replay.
 test-busykey:
     mkdir -p artifacts/resilience

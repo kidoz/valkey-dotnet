@@ -38,6 +38,14 @@ public sealed partial class ValkeyClusterIntegrationTests
         await VerifyOwnedKeyMigrationAsync(protocol, OwnedMigrationMode.DisconnectAfterSnapshot);
     }
 
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
+    public async Task OwnedMigrateIoErrorBeforeRestorePreservesSourceDataAndStream(ValkeyProtocol protocol)
+    {
+        await VerifyOwnedKeyMigrationAsync(protocol, OwnedMigrationMode.SourceOnlyIoError);
+    }
+
     private enum OwnedMigrationMode
     {
         Legacy,
@@ -45,6 +53,7 @@ public sealed partial class ValkeyClusterIntegrationTests
         CancelBeforeTransfer,
         DisconnectAfterSnapshot,
         LostMigrateReply,
+        SourceOnlyIoError,
     }
 
     [Theory]
@@ -57,16 +66,24 @@ public sealed partial class ValkeyClusterIntegrationTests
 
     private static async Task VerifyOwnedKeyMigrationAsync(ValkeyProtocol protocol, OwnedMigrationMode mode)
     {
-        var atomic = mode is not (OwnedMigrationMode.Legacy or OwnedMigrationMode.LostMigrateReply);
+        var atomic =
+            mode
+            is not (
+                OwnedMigrationMode.Legacy
+                or OwnedMigrationMode.LostMigrateReply
+                or OwnedMigrationMode.SourceOnlyIoError
+            );
+        var sourceOnlyIoError = mode == OwnedMigrationMode.SourceOnlyIoError;
         var cancelBeforeTransfer = mode == OwnedMigrationMode.CancelBeforeTransfer;
         var disconnectAfterSnapshot = mode == OwnedMigrationMode.DisconnectAfterSnapshot;
-        var retainsSource = cancelBeforeTransfer || disconnectAfterSnapshot;
+        var retainsSource = cancelBeforeTransfer || disconnectAfterSnapshot || sourceOnlyIoError;
         var flag = mode switch
         {
             OwnedMigrationMode.Legacy => "VALKEYDOTNET_RUN_KEY_TRANSFER_TESTS",
             OwnedMigrationMode.Atomic => "VALKEYDOTNET_RUN_ATOMIC_MIGRATION_TESTS",
             OwnedMigrationMode.CancelBeforeTransfer => "VALKEYDOTNET_RUN_ATOMIC_CANCELLATION_TESTS",
             OwnedMigrationMode.LostMigrateReply => "VALKEYDOTNET_RUN_MIGRATE_REPLY_LOSS_TESTS",
+            OwnedMigrationMode.SourceOnlyIoError => "VALKEYDOTNET_RUN_MIGRATE_IOERR_TESTS",
             _ => "VALKEYDOTNET_RUN_ATOMIC_ROLLBACK_TESTS",
         };
         if (Environment.GetEnvironmentVariable(flag) != "1")
@@ -159,7 +176,12 @@ public sealed partial class ValkeyClusterIntegrationTests
         await VerifyDeliveryAsync(commands, stationary, stationaryMessages, 0, token);
 
         var number = slot.ToString(CultureInfo.InvariantCulture);
-        if (disconnectAfterSnapshot)
+        if (sourceOnlyIoError)
+        {
+            await cluster.BeginSlotMigrationAsync(slot, 0, 1, 2, token);
+            await cluster.TimeoutOwnedKeyBeforeRestoreAsync(expiringKey, protocol, token);
+        }
+        else if (disconnectAfterSnapshot)
         {
             await cluster.FailAtomicSlotMigrationAfterSnapshotAsync(
                 expiringKey,
@@ -331,7 +353,7 @@ public sealed partial class ValkeyClusterIntegrationTests
                 .AsInt64()
         );
         var finalExpiry = (await owner.ExecuteAsync(new ValkeyCommand("PEXPIRETIME", expiringKey), token)).AsInt64();
-        if (atomic)
+        if (atomic || sourceOnlyIoError)
         {
             Assert.Equal(originalExpiry, finalExpiry);
         }
