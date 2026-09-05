@@ -30,6 +30,8 @@ Sharded Pub/Sub: [cluster subscriber reference](reference/cluster-subscriber.md)
 
 Cluster resilience: [run isolated primary-failover tests](how-to/run-primary-failover-tests.md).
 
+Migration routing: [run isolated ASK-migration tests](how-to/run-ask-migration-tests.md).
+
 Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).
 
 ## Writing docs here

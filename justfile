@@ -55,6 +55,13 @@ test-migration $migration_cycles="3":
     -method '*OwnedSlotMigrationPreservesShardedHandleAndStream' \
     -showLiveOutput -result-trx artifacts/resilience/migration.trx
 
+# Verify native command ASK and sharded delivery during an owned legacy migration.
+test-ask:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_ASK_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedMigrationForcesCommandAskWhileShardStreamWaitsForCutover' \
+    -showLiveOutput -result-trx artifacts/resilience/ask-migration.trx
+
 # Stop an owned primary and verify replica promotion with healthy and unavailable discovery seeds.
 test-failover:
     mkdir -p artifacts/resilience

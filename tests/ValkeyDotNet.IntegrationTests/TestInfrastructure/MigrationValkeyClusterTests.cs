@@ -4,6 +4,31 @@ namespace ValkeyDotNet.IntegrationTests.TestInfrastructure;
 public sealed class MigrationValkeyClusterTests
 {
     [Theory]
+    [InlineData(-1)]
+    [InlineData(2)]
+    public async Task RefusesMigrationWithUnexpectedKeyBudget(int expectedSourceKeys)
+    {
+        await using var cluster = new MigrationValkeyCluster();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            cluster.BeginSlotMigrationAsync(0, 0, 1, expectedSourceKeys, TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RefusesMigrationBeforeOwnedClusterInitialization(bool includeReplica)
+    {
+        await using var cluster = new MigrationValkeyCluster(includeReplica);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cluster.BeginSlotMigrationAsync(0, 0, 1, 0, TestContext.Current.CancellationToken)
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cluster.CompleteEmptySlotMigrationAsync(0, 0, 1, TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task RefusesPrimaryStopBeforeOwnedReplicaInitialization(bool includeReplica)

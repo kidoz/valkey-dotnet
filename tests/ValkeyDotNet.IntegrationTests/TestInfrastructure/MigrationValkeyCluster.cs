@@ -152,7 +152,13 @@ internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
         await CompleteEmptySlotMigrationAsync(slot, source, target, token);
     }
 
-    internal async Task BeginSlotMigrationAsync(int slot, int source, int target, int expectedSourceKeys, CancellationToken token)
+    internal async Task BeginSlotMigrationAsync(
+        int slot,
+        int source,
+        int target,
+        int expectedSourceKeys,
+        CancellationToken token
+    )
     {
         var (sourceId, targetId) = await VerifyMigrationAsync(slot, source, target, expectedSourceKeys, token);
         var number = slot.ToString(CultureInfo.InvariantCulture);
@@ -167,12 +173,20 @@ internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
         // Both nodes are empty. Publish destination ownership before retiring the source.
         Assert.Equal("OK", await CommandAsync(target, ["CLUSTER", "SETSLOT", number, "NODE", targetId], token));
         Assert.Equal("OK", await CommandAsync(source, ["CLUSTER", "SETSLOT", number, "NODE", targetId], token));
-        Assert.Equal("OK", await CommandAsync(3 - source - target, ["CLUSTER", "SETSLOT", number, "NODE", targetId], token));
+        Assert.Equal(
+            "OK",
+            await CommandAsync(3 - source - target, ["CLUSTER", "SETSLOT", number, "NODE", targetId], token)
+        );
         await WaitHealthyAsync(token);
     }
 
     private async Task<(string SourceId, string TargetId)> VerifyMigrationAsync(
-        int slot, int source, int target, int expectedSourceKeys, CancellationToken token)
+        int slot,
+        int source,
+        int target,
+        int expectedSourceKeys,
+        CancellationToken token
+    )
     {
         if (slot is < 0 or > 16383 || source is < 0 or > 2 || target is < 0 or > 2 || source == target)
         {
@@ -184,12 +198,15 @@ internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
         }
         if (!_created || _ports.Length != 3)
         {
-            throw new InvalidOperationException("Migration requires this fixture’s initialized three-primary profile.");
+            throw new InvalidOperationException("Migration requires this fixture's initialized three-primary profile.");
         }
         // Re-confirm every target immediately before fault injection, even after startup verification.
         await DiscoverAndVerifyAsync(token);
         var number = slot.ToString(CultureInfo.InvariantCulture);
-        Assert.Equal(expectedSourceKeys.ToString(CultureInfo.InvariantCulture), await CommandAsync(source, ["CLUSTER", "COUNTKEYSINSLOT", number], token));
+        Assert.Equal(
+            expectedSourceKeys.ToString(CultureInfo.InvariantCulture),
+            await CommandAsync(source, ["CLUSTER", "COUNTKEYSINSLOT", number], token)
+        );
         Assert.Equal("0", await CommandAsync(target, ["CLUSTER", "COUNTKEYSINSLOT", number], token));
         var sourceId = await CommandAsync(source, ["CLUSTER", "MYID"], token);
         var targetId = await CommandAsync(target, ["CLUSTER", "MYID"], token);
