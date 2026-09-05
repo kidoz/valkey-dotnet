@@ -25,6 +25,8 @@ Resilience: [Run isolated restart tests](how-to/run-resilience-tests.md) and
 Pub/Sub: [Subscribe to messages](how-to/subscribe-to-messages.md) and
 [dedicated subscriber reference](reference/subscriber.md).
 
+Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).
+
 ## Writing docs here
 
 Pick the quadrant before you write, and keep the page inside it:

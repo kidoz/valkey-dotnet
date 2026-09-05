@@ -4,13 +4,18 @@
 
 ### Added
 
+- Standalone RESP3 tracking client with binary invalidations, NOLOOP, BCAST/PREFIX, tracking
+  re-enablement on replacement, and bounded async delivery with invalidate-all on overflow or loss.
+- Tracking lifecycle regressions and gated live invalidation/recovery cases; no local cache or
+  cluster-tracking consistency claim is included.
 - Opt-in subscriber recovery with bounded equal-jitter backoff, a total recovery deadline, restored
   channel/pattern streams, local unsubscribe during restoration, and loss/attempt/success counters.
 - Subscriber recovery regressions covering ambiguous changes, restoration races, repeated losses,
   TLS/session settings, parsing bounds, and disposal; an explicitly gated live connection-kill test.
 - Dedicated RESP2/RESP3 subscriber with binary channel/pattern streams, independent local handles,
   bounded drop-incoming queues and drop counters, bounded acknowledgement lifecycle, and terminal
-  cancellation/disposal semantics. Tracking and sharded subscriptions remain unsupported.
+  cancellation/disposal semantics. Sharded subscriptions remain unsupported; RESP3 tracking uses
+  its own command-client API.
 - Bounded RESP2/RESP3 concurrent connection-loss regressions and recovery from a non-listening
   loopback endpoint without replaying an unsent write.
 - Opt-in, ownership-validated Docker stop/start runner with configurable cycles, resource samples,

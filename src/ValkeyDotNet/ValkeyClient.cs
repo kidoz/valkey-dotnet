@@ -37,6 +37,7 @@ public sealed partial class ValkeyClient : IAsyncDisposable
     );
 
     private readonly ValkeyClientOptions _options;
+    private readonly TrackingSession? _tracking;
     private readonly TcpClient _tcpClient;
     private readonly Stream _stream;
     private readonly RespReader _reader;
@@ -47,9 +48,10 @@ public sealed partial class ValkeyClient : IAsyncDisposable
     private Task? _responseLoop;
     private int _disposed;
 
-    private ValkeyClient(ValkeyClientOptions options, TcpClient tcpClient, Stream stream)
+    private ValkeyClient(ValkeyClientOptions options, TcpClient tcpClient, Stream stream, TrackingSession? tracking)
     {
         _options = options;
+        _tracking = tracking;
         _tcpClient = tcpClient;
         _stream = stream;
         _pendingCapacity = new SemaphoreSlim(options.MaxPendingRequests, options.MaxPendingRequests);
@@ -81,7 +83,16 @@ public sealed partial class ValkeyClient : IAsyncDisposable
         CancellationToken cancellationToken = default
     )
     {
-        options ??= new ValkeyClientOptions();
+        return await ConnectCoreAsync(options ?? new ValkeyClientOptions(), null, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    internal static async Task<ValkeyClient> ConnectCoreAsync(
+        ValkeyClientOptions options,
+        TrackingSession? tracking,
+        CancellationToken cancellationToken
+    )
+    {
         options.Validate();
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -105,7 +116,7 @@ public sealed partial class ValkeyClient : IAsyncDisposable
                 stream = ssl;
             }
 
-            var client = new ValkeyClient(options, tcpClient, stream);
+            var client = new ValkeyClient(options, tcpClient, stream, tracking);
             try
             {
                 await client.InitializeAsync(timeout.Token).ConfigureAwait(false);
@@ -334,6 +345,10 @@ public sealed partial class ValkeyClient : IAsyncDisposable
 
         ServerInfo = await SendAndReadAsync(new ValkeyCommand("HELLO", arguments.ToArray()), cancellationToken)
             .ConfigureAwait(false);
+        if (_tracking is not null)
+        {
+            TrackingSession.ThrowIfSetupError(ServerInfo);
+        }
         ServerInfo.ThrowIfError();
         if (ServerInfo.Type is not (RespType.Map or RespType.Array))
             throw new ValkeyProtocolException("HELLO returned an unexpected response type.");
@@ -343,7 +358,24 @@ public sealed partial class ValkeyClient : IAsyncDisposable
         {
             var select = await SendAndReadAsync(new ValkeyCommand("SELECT", _options.Database), cancellationToken)
                 .ConfigureAwait(false);
+            if (_tracking is not null)
+            {
+                TrackingSession.ThrowIfSetupError(select);
+            }
             select.ThrowIfError();
+        }
+        if (_tracking is not null)
+        {
+            if (NegotiatedProtocol != ValkeyProtocol.Resp3)
+            {
+                throw new ValkeyProtocolException("Managed tracking requires a negotiated RESP3 connection.");
+            }
+            var enabled = await SendAndReadAsync(_tracking.EnableCommand, cancellationToken).ConfigureAwait(false);
+            TrackingSession.ThrowIfSetupError(enabled);
+            if (enabled.Type != RespType.SimpleString || !enabled.AsBytes().Span.SequenceEqual("OK"u8))
+            {
+                throw new ValkeyProtocolException("CLIENT TRACKING returned an unexpected acknowledgement.");
+            }
         }
     }
 
@@ -387,8 +419,12 @@ public sealed partial class ValkeyClient : IAsyncDisposable
         key.Type is RespType.SimpleString or RespType.BlobString
         && string.Equals(key.AsString(), "proto", StringComparison.Ordinal);
 
-    private static void EnsureSupported(ValkeyCommand command)
+    private void EnsureSupported(ValkeyCommand command)
     {
+        if (_tracking is not null)
+        {
+            TrackingSession.EnsureSupported(command);
+        }
         if (ConnectionStateCommands.Contains(command.Name))
             throw new ValkeyUnsupportedCommandException(command.Name, ExplainRejection(command.Name));
         if (IsClientReply(command))
@@ -666,6 +702,7 @@ public sealed partial class ValkeyClient : IAsyncDisposable
             var response = await _reader.ReadAsync(cancellationToken).ConfigureAwait(false);
             if (response.Type != RespType.Push)
                 return response;
+            _tracking?.OnPush(response);
             try
             {
                 PushReceived?.Invoke(response);
@@ -779,6 +816,7 @@ public sealed partial class ValkeyClient : IAsyncDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
+        _tracking?.InvalidateAll();
         _readerShutdown.Cancel();
         try
         {

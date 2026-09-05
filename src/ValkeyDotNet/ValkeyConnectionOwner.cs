@@ -4,6 +4,7 @@ using System.Runtime.ExceptionServices;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using ValkeyDotNet.Diagnostics;
+using ValkeyDotNet.Protocol;
 
 namespace ValkeyDotNet;
 
@@ -14,6 +15,7 @@ namespace ValkeyDotNet;
 public sealed class ValkeyConnectionOwner : IAsyncDisposable
 {
     private readonly ValkeyConnectionOwnerOptions _options;
+    private readonly TrackingSession? _tracking;
     private readonly object _sync = new();
     private readonly CancellationTokenSource _shutdown = new();
     private ValkeyClient? _client;
@@ -32,6 +34,12 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
     {
         _options = options ?? new ValkeyConnectionOwnerOptions();
         _options.Validate();
+    }
+
+    internal ValkeyConnectionOwner(ValkeyConnectionOwnerOptions options, TrackingSession tracking)
+        : this(options)
+    {
+        _tracking = tracking;
     }
 
     /// <summary>Lifecycle snapshot, not a guarantee that the next network operation will succeed.</summary>
@@ -350,10 +358,8 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
                 try
                 {
                     candidate = _options.EnableTelemetry
-                        ? await OwnerDiagnostics
-                            .TrackConnectionAsync(() => ValkeyClient.ConnectAsync(_options.Connection, _shutdown.Token))
-                            .ConfigureAwait(false)
-                        : await ValkeyClient.ConnectAsync(_options.Connection, _shutdown.Token).ConfigureAwait(false);
+                        ? await OwnerDiagnostics.TrackConnectionAsync(ConnectPhysicalAsync).ConfigureAwait(false)
+                        : await ConnectPhysicalAsync().ConfigureAwait(false);
                 }
                 catch (Exception exception)
                     when (exception is IOException or SocketException or TimeoutException or ValkeyConnectionException)
@@ -425,6 +431,9 @@ public sealed class ValkeyConnectionOwner : IAsyncDisposable
             }
         }
     }
+
+    private Task<ValkeyClient> ConnectPhysicalAsync() =>
+        ValkeyClient.ConnectCoreAsync(_options.Connection, _tracking, _shutdown.Token);
 
     private async Task RetireAsync(ValkeyClient client)
     {

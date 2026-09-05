@@ -7,6 +7,143 @@ namespace ValkeyDotNet.IntegrationTests;
 
 public sealed class ValkeyClientIntegrationTests
 {
+    [Fact]
+    public async Task ManagedTrackingRestoresAfterItsOwnConnectionIsKilled()
+    {
+        if (Environment.GetEnvironmentVariable("VALKEYDOTNET_RUN_TRACKING_RECOVERY_TESTS") != "1")
+        {
+            Assert.Skip("Opt in to tracking connection-kill tests only against an isolated disposable endpoint.");
+        }
+        var endpoint = GetEndpoint();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        var token = deadline.Token;
+        var prefix = "tracking-recovery-" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
+        var key = prefix + ":key";
+        var connection = new ValkeyClientOptions { Host = endpoint.Host, Port = endpoint.Port };
+        await using var writer = await ValkeyClient.ConnectAsync(connection, token);
+        await using var tracking = new ValkeyTrackingClient(
+            new ValkeyConnectionOwnerOptions { Connection = connection },
+            new ValkeyTrackingOptions { Broadcast = true, Prefixes = [prefix] }
+        );
+        await using var messages = tracking.ReadInvalidationsAsync(token).GetAsyncEnumerator(token);
+        try
+        {
+            var previousId = (await tracking.ExecuteAsync(new ValkeyCommand("CLIENT", "ID"), token)).AsInt64();
+            for (var cycle = 0; cycle < 3; cycle++)
+            {
+                Assert.Equal(
+                    1,
+                    (await writer.ExecuteAsync(new ValkeyCommand("CLIENT", "KILL", "ID", previousId), token)).AsInt64()
+                );
+                Assert.True(await messages.MoveNextAsync());
+                Assert.True(messages.Current.InvalidateAll);
+                var newId = (await tracking.ExecuteAsync(new ValkeyCommand("CLIENT", "ID"), token)).AsInt64();
+                Assert.NotEqual(previousId, newId);
+                previousId = newId;
+                await writer.ExecuteAsync(new ValkeyCommand("SET", key, cycle, "PX", 30000), token);
+                Assert.True(await messages.MoveNextAsync());
+                Assert.False(messages.Current.InvalidateAll);
+                Assert.Equal(System.Text.Encoding.UTF8.GetBytes(key), Assert.Single(messages.Current.Keys).ToArray());
+            }
+            Assert.Equal(0, tracking.QueueOverflows);
+            Assert.Equal("PONG", await writer.PingAsync(token));
+        }
+        finally
+        {
+            await tracking.DisposeAsync();
+            await writer.ExecuteWithDeadlineAsync(
+                new ValkeyCommand("DEL", key),
+                TimeSpan.FromSeconds(5),
+                TestContext.Current.CancellationToken
+            );
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ManagedTrackingDeliversBinaryInvalidations(bool broadcast)
+    {
+        var endpoint = GetEndpoint();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        var token = deadline.Token;
+        var prefix = System.Text.Encoding.UTF8.GetBytes(
+            "tracking-" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture)
+        );
+        byte[] key = [.. prefix, 0, 255, 13, 10];
+        var connection = new ValkeyClientOptions { Host = endpoint.Host, Port = endpoint.Port };
+        await using var writer = await ValkeyClient.ConnectAsync(connection, token);
+        await using var tracking = new ValkeyTrackingClient(
+            new ValkeyConnectionOwnerOptions { Connection = connection },
+            new ValkeyTrackingOptions { Broadcast = broadcast, Prefixes = broadcast ? [prefix] : [] }
+        );
+        await using var messages = tracking.ReadInvalidationsAsync(token).GetAsyncEnumerator(token);
+        try
+        {
+            await writer.ExecuteAsync(new ValkeyCommand("SET", key, "initial", "PX", 30000), token);
+            Assert.Equal("initial", (await tracking.ExecuteAsync(new ValkeyCommand("GET", key), token)).AsString());
+            await writer.ExecuteAsync(new ValkeyCommand("SET", key, "updated", "PX", 30000), token);
+            Assert.True(await messages.MoveNextAsync());
+            Assert.False(messages.Current.InvalidateAll);
+            Assert.Equal(key, Assert.Single(messages.Current.Keys).ToArray());
+            Assert.Equal(0, tracking.QueueOverflows);
+            Assert.Equal("updated", (await tracking.ExecuteAsync(new ValkeyCommand("GET", key), token)).AsString());
+        }
+        finally
+        {
+            await tracking.DisposeAsync();
+            await writer.ExecuteWithDeadlineAsync(
+                new ValkeyCommand("DEL", key),
+                TimeSpan.FromSeconds(5),
+                TestContext.Current.CancellationToken
+            );
+        }
+    }
+
+    [Fact]
+    public async Task ManagedTrackingNoLoopSuppressesOnlyItsOwnWrites()
+    {
+        var endpoint = GetEndpoint();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        var token = deadline.Token;
+        var prefix = "tracking-noloop-" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
+        var ownKey = prefix + ":own";
+        var otherKey = prefix + ":other";
+        var connection = new ValkeyClientOptions { Host = endpoint.Host, Port = endpoint.Port };
+        await using var writer = await ValkeyClient.ConnectAsync(connection, token);
+        await using var tracking = new ValkeyTrackingClient(
+            new ValkeyConnectionOwnerOptions { Connection = connection },
+            new ValkeyTrackingOptions
+            {
+                NoLoop = true,
+                Broadcast = true,
+                Prefixes = [prefix],
+            }
+        );
+        await using var messages = tracking.ReadInvalidationsAsync(token).GetAsyncEnumerator(token);
+        try
+        {
+            await tracking.ExecuteAsync(new ValkeyCommand("SET", ownKey, "own", "PX", 30000), token);
+            // A later external write is the delivery barrier; no timing-based negative assertion.
+            await writer.ExecuteAsync(new ValkeyCommand("SET", otherKey, "external", "PX", 30000), token);
+            Assert.True(await messages.MoveNextAsync());
+            Assert.False(messages.Current.InvalidateAll);
+            Assert.Equal(System.Text.Encoding.UTF8.GetBytes(otherKey), Assert.Single(messages.Current.Keys).ToArray());
+        }
+        finally
+        {
+            await tracking.DisposeAsync();
+            await writer.ExecuteWithDeadlineAsync(
+                new ValkeyCommand("DEL", ownKey, otherKey),
+                TimeSpan.FromSeconds(5),
+                TestContext.Current.CancellationToken
+            );
+        }
+    }
+
     [Theory]
     [InlineData(ValkeyProtocol.Resp2)]
     [InlineData(ValkeyProtocol.Resp3)]
