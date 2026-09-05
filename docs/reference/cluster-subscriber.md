@@ -142,6 +142,13 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [atomic writer runner](../how-to/run-atomic-writes-tests.md) passed RESP2/RESP3 on Valkey 9.1.2
+on 2026-09-05. Two logical writers acknowledged 64 updates after snapshot import and before write
+pause; the destination retained final binary values and exact expiration after successful cutover.
+The original stream relocated once and delivered again with zero drops; the stationary stream
+had no loss or drops. This does not prove writes spanning cutover or uninterrupted publishing.
+See the [execution record](resilience-evidence.md#atomic-migration-post-snapshot-writes--2026-09-05).
+
 The [bulk acknowledgment-loss runner](../how-to/run-bulk-ack-loss-tests.md) passed RESP2/RESP3 on
 Valkey 9.1.2 on 2026-09-05. One confirmed key transfer followed by a withheld second RESTORE reply
 produced IOERR and independently observed destination-only/duplicate-copy placement. Values and

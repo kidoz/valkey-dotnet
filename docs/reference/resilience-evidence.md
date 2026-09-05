@@ -3,6 +3,48 @@
 This page separates implemented experiments from executed evidence. It is not a cache/lock
 production-readiness certification.
 
+## Atomic migration post-snapshot writes — 2026-09-05
+
+`just test-atomic-writes` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 25.657 seconds, with no
+failures or skips. Each used three fresh owned 128 MiB/one-CPU primaries on local Docker with
+DEBUG=local. The Release client ran on macOS arm64, SDK 10.0.400/.NET 10.0.11; servers ran Linux
+aarch64 without TLS. The [run guide](../how-to/run-atomic-writes-tests.md) defines the fixed bounds.
+
+The source EXPORT was held at `waiting-to-pause` using the upstream PREVENT-PAUSE hook, with a
+correlated active IMPORT and both exact provisional binary keys present on the target. Two
+independent routed clients then issued 32 paired rounds of SET XX KEEPTTL, one ordered writer per
+key and at most two pending writes. All 64 replies were OK. Both final sequence-32 binary values,
+source ownership, positive expiring TTL, exact original PEXPIRETIME, and persistent PTTL=-1 were
+verified while migration remained held. Binary delivery on the original moving/stationary streams
+also passed before hook release. This deterministic injection stage follows the
+[upstream migration test hook](https://github.com/valkey-io/valkey/blob/9.1.2/tests/unit/cluster/cluster-migrateslots.tcl).
+
+After release, both correlated jobs succeeded, all slot maps moved to the target, source membership
+was empty, and both exact keys and final acknowledged values were retained at the target. Expiry
+shift was zero in both protocols. The original moving handle/completion/enumerator survived one
+relocation and one recovery attempt, with binary delivery and zero drops. The unrelated stream
+reported no connection loss or drops. No write replay or export-client kill occurred.
+
+The shared held-migration helper retains exact ownership/member/key checks and empty job histories.
+Its 45-second budget includes connection setup, snapshot observation, writes, and completion; a
+finally block clears the hook with an independent ten-second budget. Normal teardown verified zero
+keys/shard channels/named clients and removed six containers/two networks. Evidence:
+`artifacts/resilience/atomic-writes.trx`. The manual workflow was added, not dispatched. No shipping
+API/dependency/parser/retry changes were needed.
+
+All 442 unit tests and 165 server-free harness checks passed Debug/Release; `just ci` passed and
+both live cases skipped without opt-in. A six-case repeat/shared-path regression (atomic writers,
+healthy atomic migration, and post-snapshot link-failure rollback) passed in 79.808 seconds, with
+zero expiry shifts and local drops. Evidence: `artifacts/resilience/migration-after-atomic-writes.trx`.
+Across both live runs, all twenty-four owned containers/eight networks were removed. The exact
+pre-existing Docker inventory remained and all three hostloom services stayed healthy. No commit
+was made.
+
+This proves bounded post-snapshot, pre-write-pause updates with two logical writers on distinct
+keys. It does not establish same-key contention, writes spanning cutover, ambiguous write outcomes,
+simultaneous faults, uninterrupted publishing, throughput/latency or memory performance, short-lease
+correctness, TLS, other server versions, or production cache/lock safety.
+
 ## Bulk RESTORE acknowledgment loss — 2026-09-05
 
 `just test-bulk-ack-loss` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 31.853 seconds, with no
