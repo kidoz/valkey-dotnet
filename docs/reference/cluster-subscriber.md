@@ -142,6 +142,14 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [source-only MIGRATE IOERR runner](../how-to/run-migrate-ioerr-tests.md) passed RESP2/RESP3
+on Valkey 9.1.2 on 2026-09-05. A blocked destination restore caused one received IOERR; its socket
+closed before unpause, and independent reads confirmed unchanged source data and an empty target.
+Original streams and slot ownership remained source-local, with zero losses/attempts/relocations/
+drops. No replay or cutover occurred. This is before-restore source-only evidence, not duplicate-copy
+reconciliation or uninterrupted publishing during the source stall. See the
+[execution record](resilience-evidence.md#source-only-migrate-ioerr--2026-09-05).
+
 The [MIGRATE BUSYKEY runner](../how-to/run-busykey-tests.md) passed RESP2/RESP3 on Valkey 9.1.2
 on 2026-09-05. A received destination conflict preserved both binary values/expirations, source
 ownership, and the same source-local and stationary streams with zero losses/attempts/relocations/

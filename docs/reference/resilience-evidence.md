@@ -3,6 +3,47 @@
 This page separates implemented experiments from executed evidence. It is not a cache/lock
 production-readiness certification.
 
+## Source-only MIGRATE IOERR — 2026-09-05
+
+`just test-migrate-ioerr` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 31.145 seconds, with no
+failures or skips. Each case used a fresh owned three-primary cluster on local Docker, with
+128 MiB/one CPU per node and DEBUG disabled. The Release client ran on macOS arm64 with SDK
+10.0.400 and .NET 10.0.11; servers ran Linux aarch64 without TLS.
+
+The owned destination's finite WRITE pause blocked RESTORE-ASKING during a single-key MIGRATE.
+The runner observed one uniquely identified blocked restore connection before receiving IOERR
+from the source's two-second server-side idle timeout. That exact destination socket disappeared
+before explicit unpause. The source client reported `ValkeyServerException`, `ErrorCode=IOERR`,
+and `DeliveryStatus=ReplyReceived`; subsequent PING and binary ECHO on the same physical connection
+succeeded. Source command statistics confirmed one MIGRATE call, with no application replay.
+
+The destination was unpaused under an independent cleanup deadline. Three subsequent GET/count
+observations and final node-local placement checks found no destination key. Both original source
+keys retained their binary values, with zero absolute-expiration shift for the 4 KiB expiring value
+and the persistent key's expected TTL sentinel. All slot maps retained the source owner. Original
+sharded handles/streams delivered binary messages after the fault with zero connection losses,
+reconnect attempts, relocations, or local queue drops. No cutover or winner-selection policy ran.
+
+The distinction is material: a received IOERR still permits either source-only or duplicate-copy
+placement under the [MIGRATE contract](https://valkey.io/commands/migrate/). These independent
+observations establish only the source-only, before-restore case. They are not evidence for a lost
+RESTORE acknowledgment, an after-import duplicate copy, bulk partial success, concurrent mutation,
+live TLS, or other server versions. The source's synchronous migration also stalls source commands
+during the timeout; this is not a low-latency or uninterrupted-publishing claim.
+
+Cleanup discarded only the two known source fixture keys, unsubscribed, verified zero keys/shard
+channels/named clients, and removed all six owned containers/two networks. Evidence:
+`artifacts/resilience/migrate-ioerr.trx`. All 442 unit tests and 111 harness checks passed in
+Debug/Release, `just ci` passed, and both new cases skipped without opt-in. The manual workflow
+was added but not dispatched. No shipping library code or retry policy changed. See
+[runner controls](../how-to/run-migrate-ioerr-tests.md).
+
+The shared-harness regression passed four RESP2/RESP3 legacy-transfer and pre-transfer-cancellation
+cases in 54.264 seconds (`artifacts/resilience/migration-after-ioerr.trx`). Legacy expiry shifts were
+0 ms/+1 ms; cancellation retained exact expiry; all cases reported zero drops. Across both live
+runs, eighteen owned containers and six networks were removed. The before/after Docker inventory
+retained all existing containers/networks, and the three hostloom services remained healthy.
+
 ## MIGRATE BUSYKEY conflict — 2026-09-05
 
 `just test-busykey` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 28.171 seconds, with no
