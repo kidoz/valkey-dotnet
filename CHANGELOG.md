@@ -17,6 +17,10 @@
 
 ### Added
 
+- Opt-in atomic migration rollback runner and manual workflow: close one verified export link after
+  snapshot import, verify failed jobs and provisional-key cleanup, and preserve source data/sharded
+  streams. Local-only migration debug is confined to the new owned rollback fixture.
+
 - Opt-in pre-transfer atomic migration cancellation runner and manual workflow, checking active-to-cancelled
   job identity, unchanged source keys/expiration/slot maps, and uninterrupted RESP2/RESP3 sharded streams.
 

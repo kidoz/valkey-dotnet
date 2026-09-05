@@ -55,6 +55,13 @@ test-migration $migration_cycles="3":
     -method '*OwnedSlotMigrationPreservesShardedHandleAndStream' \
     -showLiveOutput -result-trx artifacts/resilience/migration.trx
 
+# Break one owned export connection after snapshot import and verify rollback and source delivery.
+test-atomic-rollback:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_ATOMIC_ROLLBACK_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedAtomicLinkFailureCleansImportedKeysAndPreservesSourceStream' \
+    -showLiveOutput -result-trx artifacts/resilience/atomic-rollback.trx
+
 # Cancel one owned atomic migration before transfer and verify unchanged data and sharded delivery.
 test-atomic-cancellation:
     mkdir -p artifacts/resilience

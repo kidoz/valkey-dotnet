@@ -15,9 +15,15 @@ internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
     private readonly string?[] _containers;
     private string? _dockerHost;
     private bool _created;
+    private readonly bool _enableMigrationDebug;
 
-    internal MigrationValkeyCluster(bool includeReplica = false)
+    internal MigrationValkeyCluster(bool includeReplica = false, bool enableMigrationDebug = false)
     {
+        if (includeReplica && enableMigrationDebug)
+        {
+            throw new ArgumentException("Migration debug requires the three-primary rollback fixture.");
+        }
+        _enableMigrationDebug = enableMigrationDebug;
         _ports = new int[includeReplica ? 4 : 3];
         _containers = new string?[_ports.Length];
         var reservations = new List<TcpListener>();
@@ -42,7 +48,13 @@ internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
     }
 
     internal string Project =>
-        (_ports.Length == 4 ? "valkey-dotnet-failover-tests-" : "valkey-dotnet-migration-tests-") + _token;
+        (
+            _enableMigrationDebug ? "valkey-dotnet-rollback-tests-"
+            : _ports.Length == 4 ? "valkey-dotnet-failover-tests-"
+            : "valkey-dotnet-migration-tests-"
+        ) + _token;
+
+    internal string MigrationDebugMode => _enableMigrationDebug ? "local" : "no";
 
     internal static int ParseCycles(string? text)
     {
@@ -419,6 +431,8 @@ internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
             process.StartInfo.ArgumentList.Add(argument);
         }
         process.StartInfo.Environment["VALKEYDOTNET_MIGRATION_TOKEN"] = _token;
+        // Never inherit a caller's attempt to enable DEBUG in an ordinary fixture.
+        process.StartInfo.Environment["VALKEYDOTNET_MIGRATION_DEBUG"] = MigrationDebugMode;
         process.StartInfo.Environment.Remove("COMPOSE_PROFILES");
         for (var index = 0; index < _ports.Length; index++)
         {

@@ -11,7 +11,7 @@ public sealed partial class ValkeyClusterIntegrationTests
     [InlineData(ValkeyProtocol.Resp3)]
     public async Task OwnedNonemptyMigrationPreservesBinaryKeysExpiryAndShardStream(ValkeyProtocol protocol)
     {
-        await VerifyOwnedKeyMigrationAsync(protocol, atomic: false);
+        await VerifyOwnedKeyMigrationAsync(protocol, OwnedMigrationMode.Legacy);
     }
 
     [Theory]
@@ -19,7 +19,7 @@ public sealed partial class ValkeyClusterIntegrationTests
     [InlineData(ValkeyProtocol.Resp3)]
     public async Task OwnedAtomicMigrationPreservesBinaryKeysExpiryAndShardStream(ValkeyProtocol protocol)
     {
-        await VerifyOwnedKeyMigrationAsync(protocol, atomic: true);
+        await VerifyOwnedKeyMigrationAsync(protocol, OwnedMigrationMode.Atomic);
     }
 
     [Theory]
@@ -27,19 +27,38 @@ public sealed partial class ValkeyClusterIntegrationTests
     [InlineData(ValkeyProtocol.Resp3)]
     public async Task OwnedAtomicCancellationPreservesSourceKeysExpiryAndShardStream(ValkeyProtocol protocol)
     {
-        await VerifyOwnedKeyMigrationAsync(protocol, atomic: true, cancelBeforeTransfer: true);
+        await VerifyOwnedKeyMigrationAsync(protocol, OwnedMigrationMode.CancelBeforeTransfer);
     }
 
-    private static async Task VerifyOwnedKeyMigrationAsync(
-        ValkeyProtocol protocol,
-        bool atomic,
-        bool cancelBeforeTransfer = false
-    )
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
+    public async Task OwnedAtomicLinkFailureCleansImportedKeysAndPreservesSourceStream(ValkeyProtocol protocol)
     {
-        var flag =
-            cancelBeforeTransfer ? "VALKEYDOTNET_RUN_ATOMIC_CANCELLATION_TESTS"
-            : atomic ? "VALKEYDOTNET_RUN_ATOMIC_MIGRATION_TESTS"
-            : "VALKEYDOTNET_RUN_KEY_TRANSFER_TESTS";
+        await VerifyOwnedKeyMigrationAsync(protocol, OwnedMigrationMode.DisconnectAfterSnapshot);
+    }
+
+    private enum OwnedMigrationMode
+    {
+        Legacy,
+        Atomic,
+        CancelBeforeTransfer,
+        DisconnectAfterSnapshot,
+    }
+
+    private static async Task VerifyOwnedKeyMigrationAsync(ValkeyProtocol protocol, OwnedMigrationMode mode)
+    {
+        var atomic = mode != OwnedMigrationMode.Legacy;
+        var cancelBeforeTransfer = mode == OwnedMigrationMode.CancelBeforeTransfer;
+        var disconnectAfterSnapshot = mode == OwnedMigrationMode.DisconnectAfterSnapshot;
+        var retainsSource = cancelBeforeTransfer || disconnectAfterSnapshot;
+        var flag = mode switch
+        {
+            OwnedMigrationMode.Legacy => "VALKEYDOTNET_RUN_KEY_TRANSFER_TESTS",
+            OwnedMigrationMode.Atomic => "VALKEYDOTNET_RUN_ATOMIC_MIGRATION_TESTS",
+            OwnedMigrationMode.CancelBeforeTransfer => "VALKEYDOTNET_RUN_ATOMIC_CANCELLATION_TESTS",
+            _ => "VALKEYDOTNET_RUN_ATOMIC_ROLLBACK_TESTS",
+        };
         if (Environment.GetEnvironmentVariable(flag) != "1")
         {
             Assert.Skip($"Set {flag}=1 to migrate keys in a fresh owned Docker cluster.");
@@ -47,9 +66,9 @@ public sealed partial class ValkeyClusterIntegrationTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromMinutes(5));
         var token = deadline.Token;
-        await using var cluster = new MigrationValkeyCluster();
+        await using var cluster = new MigrationValkeyCluster(enableMigrationDebug: disconnectAfterSnapshot);
         TestContext.Current.TestOutputHelper?.WriteLine(
-            $"Owned key-migration project: {cluster.Project}; protocol={protocol}; atomic={atomic}; cancel_before_transfer={cancelBeforeTransfer}"
+            $"Owned key-migration project: {cluster.Project}; protocol={protocol}; mode={mode}"
         );
         await cluster.StartNewAsync(token);
         var version = (await cluster.CommandAsync(0, ["INFO", "SERVER"], token))
@@ -60,6 +79,10 @@ public sealed partial class ValkeyClusterIntegrationTests
         for (var index = 0; index < 3; index++)
         {
             Assert.Equal("0", await cluster.CommandAsync(index, ["DBSIZE"], token));
+            Assert.Equal(
+                "enable-debug-command\n" + cluster.MigrationDebugMode,
+                await cluster.CommandAsync(index, ["CONFIG", "GET", "enable-debug-command"], token)
+            );
         }
         var tag = FindKey(cluster.Project, 0, 5460);
         byte[] channel = [.. Encoding.UTF8.GetBytes("{" + tag + "}"), 0, 255, 13, 10];
@@ -126,7 +149,32 @@ public sealed partial class ValkeyClusterIntegrationTests
         await VerifyDeliveryAsync(commands, stationary, stationaryMessages, 0, token);
 
         var number = slot.ToString(CultureInfo.InvariantCulture);
-        if (cancelBeforeTransfer)
+        if (disconnectAfterSnapshot)
+        {
+            await cluster.FailAtomicSlotMigrationAfterSnapshotAsync(
+                expiringKey,
+                persistentKey,
+                protocol,
+                async bounded =>
+                {
+                    await VerifySlotOwnerAsync(cluster, slot, 0, protocol, bounded);
+                    await VerifyTransferredValuesAsync(
+                        commands,
+                        expiringKey,
+                        expiringValue,
+                        persistentKey,
+                        persistentValue,
+                        originalExpiry,
+                        bounded
+                    );
+                    await VerifyDeliveryAsync(commands, channel, messages, 1, bounded);
+                    await VerifyDeliveryAsync(commands, stationary, stationaryMessages, 1, bounded);
+                    Assert.Equal(0, handle.ConnectionLosses);
+                },
+                token
+            );
+        }
+        else if (cancelBeforeTransfer)
         {
             await VerifySlotOwnerAsync(cluster, slot, 0, protocol, token);
             await cluster.CancelAtomicSlotMigrationBeforeTransferAsync(slot, 0, 1, protocol, token);
@@ -211,16 +259,16 @@ public sealed partial class ValkeyClusterIntegrationTests
         }
         using var recovery = CancellationTokenSource.CreateLinkedTokenSource(token);
         recovery.CancelAfter(TimeSpan.FromSeconds(35));
-        var expectedRelocations = cancelBeforeTransfer ? 0 : 1;
+        var expectedRelocations = retainsSource ? 0 : 1;
         while (handle.SuccessfulRelocations < expectedRelocations || !handle.IsConnected)
         {
             Assert.Null(handle.Failure);
             Assert.False(completion.IsCompleted);
             await Task.Delay(20, recovery.Token);
         }
-        await VerifySlotOwnerAsync(cluster, slot, cancelBeforeTransfer ? 0 : 1, protocol, token);
-        var emptyNode = cancelBeforeTransfer ? target : source;
-        var owner = cancelBeforeTransfer ? source : target;
+        await VerifySlotOwnerAsync(cluster, slot, retainsSource ? 0 : 1, protocol, token);
+        var emptyNode = retainsSource ? target : source;
+        var owner = retainsSource ? source : target;
         Assert.Empty(
             (await emptyNode.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "2"), token)).AsArray()
         );
@@ -247,20 +295,20 @@ public sealed partial class ValkeyClusterIntegrationTests
         Assert.Equal(expectedRelocations, handle.ConnectionLosses);
         Assert.Equal(expectedRelocations, handle.SuccessfulReconnects);
         Assert.Equal(expectedRelocations, handle.SuccessfulRelocations);
-        if (cancelBeforeTransfer)
+        if (retainsSource)
         {
             Assert.Equal(0, handle.ReconnectAttempts);
         }
         Assert.Equal(0, handle.DroppedMessages);
         Assert.Equal(0, untouched.ConnectionLosses);
         Assert.Equal(
-            cancelBeforeTransfer ? 1 : 0,
+            retainsSource ? 1 : 0,
             (await source.ExecuteAsync(new ValkeyCommand("PUBSUB", "SHARDNUMSUB", channel), token))
                 .AsArray()[1]
                 .AsInt64()
         );
         Assert.Equal(
-            cancelBeforeTransfer ? 0 : 1,
+            retainsSource ? 0 : 1,
             (await target.ExecuteAsync(new ValkeyCommand("PUBSUB", "SHARDNUMSUB", channel), token))
                 .AsArray()[1]
                 .AsInt64()
@@ -271,7 +319,7 @@ public sealed partial class ValkeyClusterIntegrationTests
             Assert.Equal(originalExpiry, finalExpiry);
         }
         TestContext.Current.TestOutputHelper?.WriteLine(
-            $"slot={slot}; transferred_keys={(cancelBeforeTransfer ? 0 : 2)}; expiry_shift_ms={finalExpiry - originalExpiry}; atomic={atomic}; cancelled={cancelBeforeTransfer}; relocations={handle.SuccessfulRelocations}; attempts={handle.ReconnectAttempts}; dropped={handle.DroppedMessages}"
+            $"slot={slot}; destination_keys={(retainsSource ? 0 : 2)}; expiry_shift_ms={finalExpiry - originalExpiry}; mode={mode}; relocations={handle.SuccessfulRelocations}; attempts={handle.ReconnectAttempts}; dropped={handle.DroppedMessages}"
         );
         Assert.Equal(
             2,

@@ -13,6 +13,7 @@ x-node: &node
     - >-
       exec valkey-server --save '' --appendonly no --cluster-enabled yes
       --cluster-config-file /data/nodes.conf --cluster-node-timeout 5000
+      --enable-debug-command ${VALKEYDOTNET_MIGRATION_DEBUG:-no}
       --cluster-announce-hostname "$$HOSTNAME" --cluster-preferred-endpoint-type hostname
   healthcheck:
     test: ["CMD", "valkey-cli", "ping"]

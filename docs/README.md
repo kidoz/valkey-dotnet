@@ -38,6 +38,8 @@ Atomic migration: [run isolated atomic slot-migration tests](how-to/run-atomic-m
 
 Migration cancellation: [run isolated pre-transfer cancellation tests](how-to/run-atomic-cancellation-tests.md).
 
+Migration rollback: [run isolated post-snapshot link-failure tests](how-to/run-atomic-rollback-tests.md).
+
 Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).
 
 ## Writing docs here

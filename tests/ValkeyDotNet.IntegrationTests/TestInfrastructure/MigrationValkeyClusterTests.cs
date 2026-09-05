@@ -3,6 +3,89 @@ namespace ValkeyDotNet.IntegrationTests.TestInfrastructure;
 // Harness-only checks: these never start Docker or mutate a server.
 public sealed class MigrationValkeyClusterTests
 {
+    [Fact]
+    public async Task MigrationDebugIsExplicitLocalOnlyAndSeparateFromFailover()
+    {
+        await using var normal = new MigrationValkeyCluster();
+        await using var rollback = new MigrationValkeyCluster(enableMigrationDebug: true);
+        Assert.Equal("no", normal.MigrationDebugMode);
+        Assert.Equal("local", rollback.MigrationDebugMode);
+        Assert.StartsWith("valkey-dotnet-rollback-tests-", rollback.Project, StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(() =>
+            new MigrationValkeyCluster(includeReplica: true, enableMigrationDebug: true)
+        );
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RefusesAtomicRollbackBeforeOwnedDebugClusterInitialization(bool enableMigrationDebug)
+    {
+        await using var cluster = new MigrationValkeyCluster(enableMigrationDebug: enableMigrationDebug);
+        var prefix = System.Text.Encoding.UTF8.GetBytes("{" + cluster.Project + ":0}");
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cluster.FailAtomicSlotMigrationAfterSnapshotAsync(
+                [.. prefix, 1],
+                [.. prefix, 2],
+                ValkeyProtocol.Resp3,
+                _ => Task.CompletedTask,
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Fact]
+    public async Task RollbackRefusesUnscopedOrDuplicateKeys()
+    {
+        await using var cluster = new MigrationValkeyCluster(enableMigrationDebug: true);
+        var key = System.Text.Encoding.UTF8.GetBytes("{" + cluster.Project + ":0}");
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            cluster.FailAtomicSlotMigrationAfterSnapshotAsync(
+                "external"u8.ToArray(),
+                key,
+                ValkeyProtocol.Resp2,
+                _ => Task.CompletedTask,
+                TestContext.Current.CancellationToken
+            )
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cluster.FailAtomicSlotMigrationAfterSnapshotAsync(
+                key,
+                key,
+                ValkeyProtocol.Resp2,
+                _ => Task.CompletedTask,
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("id=1 flags=N")]
+    [InlineData("id=0 flags=E")]
+    [InlineData("id=-1 flags=E")]
+    [InlineData("id=+1 flags=E")]
+    [InlineData("id=18446744073709551616 flags=E")]
+    [InlineData("id=1 flags=E\nid=2 flags=E")]
+    [InlineData("id=1 id=2 flags=E")]
+    [InlineData("id=1 flags=E flags=N")]
+    [InlineData("id=1")]
+    [InlineData("flags=E")]
+    [InlineData("id=1 flags=E malformed")]
+    public void ExportClientSelectionRejectsAmbiguousOrInvalidIdentity(string text)
+    {
+        Assert.Throws<InvalidOperationException>(() => MigrationValkeyCluster.ParseExportClientId(text));
+    }
+
+    [Fact]
+    public void ExportClientSelectionIsBoundedAndKeepsExactId()
+    {
+        Assert.Equal("123", MigrationValkeyCluster.ParseExportClientId("id=123 addr=127.0.0.1:6379 flags=E name=\n"));
+        Assert.Throws<InvalidOperationException>(() =>
+            MigrationValkeyCluster.ParseExportClientId(new string('x', 16385))
+        );
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
