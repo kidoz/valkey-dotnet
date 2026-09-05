@@ -57,8 +57,9 @@ The sampler does not force GC between rows, so collection and tiered-JIT history
 Repeat runs on an otherwise quiet machine and retain every result, including outliers. The short
 warm-up, fixed case order, Docker VM, shared host services, and limited sample counts prevent these
 numbers from being portable SLOs or release thresholds. Do not compare them directly with codec
-microbenchmarks. Cluster/TLS, other payloads/concurrencies/versions, publishing/invalidation latency,
-individually timed acquisition/release, and prolonged resource behavior need separate profiles.
+microbenchmarks. [Publishing/invalidation measurements](run-notification-benchmarks.md) have a separate
+profile. Cluster/TLS, other payloads/concurrencies/versions, individually timed acquisition/release,
+and prolonged resource behavior need additional profiles.
 
 ## Safety and evidence
 

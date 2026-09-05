@@ -22,6 +22,11 @@ public static class Program
             await RoundTripBenchmarks.RunAsync();
             return;
         }
+        if (args.Length == 1 && args[0] == "--notifications")
+        {
+            await NotificationBenchmarks.RunAsync();
+            return;
+        }
         BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
     }
 }

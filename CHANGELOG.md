@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Bounded publish-throughput and default/BCAST invalidation-latency benchmarks, with acknowledgment
+  versus delivery percentiles/rates, raw samples, separate correctness tests and a manual workflow.
+
 ## [1.1.0] - 2026-09-06
 
 ### Performance

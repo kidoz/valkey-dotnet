@@ -241,6 +241,17 @@ test-roundtrip-workloads:
 bench-roundtrips:
     dotnet run -c Release --project {{ benchmarks }} -- --roundtrips
 
+# Verify binary Pub/Sub and tracking workloads on fresh owned servers, without timing thresholds.
+test-notification-workloads:
+    mkdir -p artifacts/performance
+    VALKEYDOTNET_RUN_NOTIFICATION_TESTS=1 dotnet run -c Release --project {{ integration_tests }} -- \
+    -method '*OwnedNotificationWorkloadsDeliverEveryBinaryIdentity' \
+    -showLiveOutput -result-trx artifacts/performance/notification-workloads.trx
+
+# Fixed standalone publish and default/BCAST tracking profile, one/eight callers.
+bench-notifications:
+    dotnet run -c Release --project {{ benchmarks }} -- --notifications
+
 # Isolate GET reply parsing allocation from the identical owned result graph; no server.
 bench-get-replies:
     dotnet run -c Release --project {{ benchmarks }} -- --filter '*GetReplyBenchmarks*'
