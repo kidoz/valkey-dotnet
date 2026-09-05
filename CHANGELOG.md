@@ -17,6 +17,10 @@
 
 ### Added
 
+- Opt-in bounded resubscribe soak runner and manual workflow: retain RESP2/RESP3 sharded streams
+  through repeated relocation, check exact settled connection/registration counts, and record
+  post-warm-up heap, handle, working-set, and thread-pool resource samples.
+
 - Opt-in MIGRATE reply-loss runner and manual workflow: discard one confirmed success reply,
   verify delivery ambiguity and physical-client invalidation, reconcile node-local placement without
   replay, and retain data/expiration and same-stream sharded cutover in RESP2/RESP3.

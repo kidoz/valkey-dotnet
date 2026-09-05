@@ -55,6 +55,14 @@ test-migration $migration_cycles="3":
     -method '*OwnedSlotMigrationPreservesShardedHandleAndStream' \
     -showLiveOutput -result-trx artifacts/resilience/migration.trx
 
+# Repeatedly relocate retained streams on fresh clusters and sample settled resource bounds.
+test-resubscribe-soak $resubscribe_cycles="30":
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_RESUBSCRIBE_SOAK=1 VALKEYDOTNET_RESUBSCRIBE_CYCLES="$resubscribe_cycles" \
+    dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedResubscribeSoakPreservesStreamsAndBoundsSettledResources' \
+    -showLiveOutput -result-trx artifacts/resilience/resubscribe-soak.trx
+
 # Lose one completed MIGRATE reply and reconcile node-local placement without replay.
 test-migrate-reply-loss:
     mkdir -p artifacts/resilience
