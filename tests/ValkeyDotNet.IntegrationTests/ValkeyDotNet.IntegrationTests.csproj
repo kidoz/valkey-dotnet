@@ -4,6 +4,11 @@
     </PropertyGroup>
     <ItemGroup>
         <None
+            Include="../../dev/docker-compose.migration.yml"
+            Link="docker-compose.migration.yml"
+            CopyToOutputDirectory="PreserveNewest"
+        />
+        <None
             Include="../../dev/docker-compose.resilience.yml"
             Link="docker-compose.resilience.yml"
             CopyToOutputDirectory="PreserveNewest"

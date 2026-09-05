@@ -126,6 +126,10 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+An opt-in [isolated slot-migration runner](../how-to/run-slot-migration-tests.md) now exercises
+real legacy empty-slot moves while retaining established handles. It has not yet been executed live
+for this increment; the presence of the runner is not migration/failover evidence.
+
 The topology-recovery increment adds 32 scripted loopback cases covering RESP2/RESP3 same-stream
 relocation after transport loss or server shard removal, restoration MOVED/ASK, redirect limits,
 invalid/denied replies, seed fallback and endpoint caps, discovery timeout, disposal/unsubscribe,

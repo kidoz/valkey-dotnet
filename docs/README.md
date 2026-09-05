@@ -25,7 +25,8 @@ Resilience: [Run isolated restart tests](how-to/run-resilience-tests.md) and
 Pub/Sub: [Subscribe to messages](how-to/subscribe-to-messages.md) and
 [dedicated subscriber reference](reference/subscriber.md).
 
-Sharded Pub/Sub: [cluster subscriber reference](reference/cluster-subscriber.md).
+Sharded Pub/Sub: [cluster subscriber reference](reference/cluster-subscriber.md) and
+[run isolated slot-migration tests](how-to/run-slot-migration-tests.md).
 
 Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).
 

@@ -47,6 +47,14 @@ test-resilience $resilience_version="9.1" $resilience_cycles="3":
     -method '*OwnedServerRestartsRecoverWithoutOfflineWriteReplayOrResourceGrowth' \
     -showLiveOutput -result-trx "artifacts/resilience/restart-$resilience_version.trx"
 
+# Create a fresh local three-primary cluster, migrate one slot, and remove only owned resources.
+test-migration $migration_cycles="3":
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_MIGRATION_TESTS=1 VALKEYDOTNET_MIGRATION_CYCLES="$migration_cycles" \
+    dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedSlotMigrationPreservesShardedHandleAndStream' \
+    -showLiveOutput -result-trx artifacts/resilience/migration.trx
+
 # Start every supported Valkey line and wait until each is healthy.
 valkey-up:
     docker compose -f {{ compose }} up -d --wait

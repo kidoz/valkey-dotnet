@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace ValkeyDotNet.IntegrationTests;
 
-public sealed class ValkeyClusterIntegrationTests
+public sealed partial class ValkeyClusterIntegrationTests
 {
     [Theory]
     [InlineData(ValkeyProtocol.Resp2)]

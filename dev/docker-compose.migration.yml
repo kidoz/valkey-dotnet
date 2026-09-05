@@ -1,0 +1,40 @@
+# Only the opt-in migration fixture creates this project; no existing endpoint is accepted.
+x-node: &node
+  image: valkey/valkey:9.1
+  restart: "no"
+  mem_limit: 128m
+  cpus: 1
+  tmpfs:
+    - /data:size=16m
+  labels:
+    com.valkeydotnet.migration-token: ${VALKEYDOTNET_MIGRATION_TOKEN:?}
+  entrypoint: ["sh", "-ec"]
+  command:
+    - >-
+      exec valkey-server --save '' --appendonly no --cluster-enabled yes
+      --cluster-config-file /data/nodes.conf --cluster-node-timeout 5000
+      --cluster-announce-hostname "$$HOSTNAME" --cluster-preferred-endpoint-type hostname
+  healthcheck:
+    test: ["CMD", "valkey-cli", "ping"]
+    interval: 1s
+    timeout: 2s
+    retries: 30
+
+services:
+  node-1:
+    <<: *node
+    hostname: node-1
+    ports: ["127.0.0.1:${VALKEYDOTNET_MIGRATION_PORT_1:?}:6379"]
+  node-2:
+    <<: *node
+    hostname: node-2
+    ports: ["127.0.0.1:${VALKEYDOTNET_MIGRATION_PORT_2:?}:6379"]
+  node-3:
+    <<: *node
+    hostname: node-3
+    ports: ["127.0.0.1:${VALKEYDOTNET_MIGRATION_PORT_3:?}:6379"]
+
+networks:
+  default:
+    labels:
+      com.valkeydotnet.migration-token: ${VALKEYDOTNET_MIGRATION_TOKEN:?}

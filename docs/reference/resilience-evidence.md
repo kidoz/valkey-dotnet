@@ -57,3 +57,18 @@ additional full Debug runs; this does not extend the live test's scope. See the
 
 See [Run isolated restart tests](../how-to/run-resilience-tests.md) for the experiment's safety and
 cleanup contract.
+
+## Slot-migration runner
+
+`OwnedSlotMigrationPreservesShardedHandleAndStream` is an opt-in live RESP2/RESP3 experiment using
+three newly owned Valkey 9.1 primaries. It moves one empty slot using legacy SETSLOT, retaining the
+same sharded handle/stream and checking binary delivery, registration ownership, unrelated-channel
+isolation, counters, final unsubscription, and resource cleanup. It is exposed by `just test-migration`
+and the manual **Slot migration** workflow. The default is three moves per protocol, with a maximum
+of twenty and a five-minute deadline per case.
+
+The runner is implemented, but live execution has not yet been performed for this increment.
+Build and deterministic checks do not establish real slot-migration success. Atomic migration,
+nonempty-key transfer, forced ASK, primary failover, seed unavailability, TLS, and prolonged soak
+remain separate evidence requirements. The [run guide](../how-to/run-slot-migration-tests.md)
+describes ownership checks, opt-in controls, and cleanup limits.

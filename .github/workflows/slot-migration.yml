@@ -1,0 +1,43 @@
+name: Slot migration
+
+# Disruptive and manual only; each test owns its entire disposable cluster.
+on:
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: Slot moves per protocol (1-20, five-minute test deadline)
+        type: string
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  migration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      VALKEYDOTNET_RUN_MIGRATION_TESTS: "1"
+      VALKEYDOTNET_MIGRATION_CYCLES: ${{ inputs.cycles }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+      - name: Run isolated slot-migration tests
+        run: |
+          mkdir -p artifacts/resilience
+          dotnet run --project tests/ValkeyDotNet.IntegrationTests --configuration Release -- \
+            -method '*OwnedSlotMigrationPreservesShardedHandleAndStream' \
+            -showLiveOutput -result-trx artifacts/resilience/migration.trx
+      - name: Upload migration evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: slot-migration-results
+          path: artifacts/resilience/migration.trx
+          if-no-files-found: warn

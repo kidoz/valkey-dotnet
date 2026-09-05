@@ -13,6 +13,9 @@
 
 ### Added
 
+- Opt-in owned three-primary slot-migration runner, bounded RESP2/RESP3 same-stream recovery checks,
+  random loopback ports, ownership-verified cleanup, and a manual Slot migration workflow.
+  Live execution remains explicitly opt-in.
 - Opt-in established sharded subscription topology recovery with the same handle and bounded queue,
   serialized temporary discovery, bounded known-primary fallback, restoration MOVED/ASK handling,
   and loss/attempt/relocation counters. Add deterministic lifecycle, TLS, and resource-bound coverage;
