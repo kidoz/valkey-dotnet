@@ -70,6 +70,13 @@ test-migrate-ioerr:
     -method '*OwnedMigrateIoErrorBeforeRestorePreservesSourceDataAndStream' \
     -showLiveOutput -result-trx artifacts/resilience/migrate-ioerr.trx
 
+# Confirm the first bulk transfer and lose the second RESTORE acknowledgment without replay.
+test-bulk-ack-loss:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_BULK_ACK_LOSS_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedBulkAcknowledgmentLossReconcilesMovedAndDuplicateKeysWithoutReplay' \
+    -showLiveOutput -result-trx artifacts/resilience/bulk-ack-loss.trx
+
 # Reconcile a two-key MIGRATE's partial success with the conflict first and last.
 test-bulk-conflict:
     mkdir -p artifacts/resilience

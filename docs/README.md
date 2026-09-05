@@ -50,6 +50,8 @@ Duplicate copies after transfer timeout: [run isolated RESTORE acknowledgment-lo
 
 Bulk partial success: [run isolated bulk MIGRATE conflict tests](how-to/run-bulk-conflict-tests.md).
 
+Bulk transfer timeout: [run isolated bulk acknowledgment-loss tests](how-to/run-bulk-ack-loss-tests.md).
+
 Repeated recovery: [run isolated resubscribe soak tests](how-to/run-resubscribe-soak-tests.md).
 
 Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).

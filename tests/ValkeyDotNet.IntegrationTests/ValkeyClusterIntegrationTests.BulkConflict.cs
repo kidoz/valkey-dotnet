@@ -16,9 +16,27 @@ public sealed partial class ValkeyClusterIntegrationTests
         bool conflictFirst
     )
     {
-        if (Environment.GetEnvironmentVariable("VALKEYDOTNET_RUN_BULK_CONFLICT_TESTS") != "1")
+        await VerifyOwnedBulkReconciliationAsync(protocol, conflictFirst, loseAcknowledgment: false);
+    }
+
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
+    public async Task OwnedBulkAcknowledgmentLossReconcilesMovedAndDuplicateKeysWithoutReplay(ValkeyProtocol protocol)
+    {
+        await VerifyOwnedBulkReconciliationAsync(protocol, conflictFirst: false, loseAcknowledgment: true);
+    }
+
+    private static async Task VerifyOwnedBulkReconciliationAsync(
+        ValkeyProtocol protocol,
+        bool conflictFirst,
+        bool loseAcknowledgment
+    )
+    {
+        var flag = loseAcknowledgment ? "VALKEYDOTNET_RUN_BULK_ACK_LOSS_TESTS" : "VALKEYDOTNET_RUN_BULK_CONFLICT_TESTS";
+        if (Environment.GetEnvironmentVariable(flag) != "1")
         {
-            Assert.Skip("Set VALKEYDOTNET_RUN_BULK_CONFLICT_TESTS=1 to test a two-key batch in a fresh owned cluster.");
+            Assert.Skip($"Set {flag}=1 to test a two-key batch in a fresh owned cluster.");
         }
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromMinutes(5));
@@ -26,7 +44,7 @@ public sealed partial class ValkeyClusterIntegrationTests
         await using var cluster = new MigrationValkeyCluster();
         var output = TestContext.Current.TestOutputHelper;
         output?.WriteLine(
-            $"Owned bulk-conflict project: {cluster.Project}; protocol={protocol}; conflict_first={conflictFirst}"
+            $"Owned bulk-reconciliation project: {cluster.Project}; protocol={protocol}; conflict_first={conflictFirst}; ack_loss={loseAcknowledgment}"
         );
         await cluster.StartNewAsync(token);
         for (var index = 0; index < 3; index++)
@@ -47,7 +65,7 @@ public sealed partial class ValkeyClusterIntegrationTests
         var number = slot.ToString(CultureInfo.InvariantCulture);
         var movingValue = Enumerable.Range(0, 4096).Select(index => (byte)(index % 256)).ToArray();
         byte[] sourceConflict = [0, 255, 13, 10, 11];
-        byte[] targetConflict = [255, 0, 13, 10, 22];
+        byte[] targetConflict = loseAcknowledgment ? sourceConflict : [255, 0, 13, 10, 22];
         var stationary = Encoding.UTF8.GetBytes(FindKey(cluster.Project + "-stationary", 10923, 16383));
         await using var commands = await ValkeyClusterClient.ConnectAsync(cluster.Options(protocol), token);
         await using var source = await ValkeyClient.ConnectAsync(cluster.NodeOptions(0, protocol), token);
@@ -79,31 +97,59 @@ public sealed partial class ValkeyClusterIntegrationTests
         Assert.Equal(
             "OK",
             (
-                await source.ExecuteAsync(new ValkeyCommand("SET", conflictingKey, sourceConflict, "NX"), token)
-            ).AsString()
-        );
-        var sourceExpiry = (await source.ExecuteAsync(new ValkeyCommand("PEXPIRETIME", movingKey), token)).AsInt64();
-        Assert.True(sourceExpiry > 0);
-        await VerifyDeliveryAsync(commands, channel, messages, 0, token);
-        await VerifyDeliveryAsync(commands, stationary, stationaryMessages, 0, token);
-        await cluster.BeginSlotMigrationAsync(slot, 0, 1, 2, token);
-        Assert.Equal(
-            "OK",
-            (
-                await ExecuteBusyKeyTargetAsync(
-                    target,
-                    new ValkeyCommand("SET", conflictingKey, targetConflict, "NX", "PX", "90000"),
+                await source.ExecuteAsync(
+                    loseAcknowledgment
+                        ? new ValkeyCommand("SET", conflictingKey, sourceConflict, "NX", "PX", "120000")
+                        : new ValkeyCommand("SET", conflictingKey, sourceConflict, "NX"),
                     token
                 )
             ).AsString()
         );
-        var conflictExpiry = (
-            await ExecuteBusyKeyTargetAsync(target, new ValkeyCommand("PEXPIRETIME", conflictingKey), token)
+        var sourceExpiry = (await source.ExecuteAsync(new ValkeyCommand("PEXPIRETIME", movingKey), token)).AsInt64();
+        Assert.True(sourceExpiry > 0);
+        var sourceConflictExpiry = (
+            await source.ExecuteAsync(new ValkeyCommand("PEXPIRETIME", conflictingKey), token)
         ).AsInt64();
-        Assert.True(conflictExpiry > 0);
-        Assert.Equal(-1, (await source.ExecuteAsync(new ValkeyCommand("PTTL", conflictingKey), token)).AsInt64());
-        Assert.True((await ExecuteBusyKeyTargetAsync(target, new ValkeyCommand("GET", movingKey), token)).IsNull);
-        await cluster.MigrateOwnedBulkWithConflictAsync(movingKey, conflictingKey, conflictFirst, protocol, token);
+        if (loseAcknowledgment)
+        {
+            Assert.True(sourceConflictExpiry > 0);
+        }
+        else
+        {
+            Assert.Equal(-1, sourceConflictExpiry);
+        }
+        await VerifyDeliveryAsync(commands, channel, messages, 0, token);
+        await VerifyDeliveryAsync(commands, stationary, stationaryMessages, 0, token);
+        await cluster.BeginSlotMigrationAsync(slot, 0, 1, 2, token);
+        long conflictExpiry;
+        if (loseAcknowledgment)
+        {
+            await cluster.LoseOwnedRestoreAcknowledgmentAsync(conflictingKey, protocol, token, movingKey);
+            conflictExpiry = (
+                await ExecuteBusyKeyTargetAsync(target, new ValkeyCommand("PEXPIRETIME", conflictingKey), token)
+            ).AsInt64();
+            Assert.InRange(conflictExpiry - sourceConflictExpiry, -1000, 1000);
+        }
+        else
+        {
+            Assert.Equal(
+                "OK",
+                (
+                    await ExecuteBusyKeyTargetAsync(
+                        target,
+                        new ValkeyCommand("SET", conflictingKey, targetConflict, "NX", "PX", "90000"),
+                        token
+                    )
+                ).AsString()
+            );
+            conflictExpiry = (
+                await ExecuteBusyKeyTargetAsync(target, new ValkeyCommand("PEXPIRETIME", conflictingKey), token)
+            ).AsInt64();
+            Assert.True(conflictExpiry > 0);
+            Assert.Equal(-1, (await source.ExecuteAsync(new ValkeyCommand("PTTL", conflictingKey), token)).AsInt64());
+            Assert.True((await ExecuteBusyKeyTargetAsync(target, new ValkeyCommand("GET", movingKey), token)).IsNull);
+            await cluster.MigrateOwnedBulkWithConflictAsync(movingKey, conflictingKey, conflictFirst, protocol, token);
+        }
         var targetExpiry = (
             await ExecuteBusyKeyTargetAsync(target, new ValkeyCommand("PEXPIRETIME", movingKey), token)
         ).AsInt64();
@@ -141,10 +187,20 @@ public sealed partial class ValkeyClusterIntegrationTests
                 ).AsInt64()
             );
             Assert.Equal(
-                -1,
+                sourceConflictExpiry,
                 (await source.ExecuteAsync(new ValkeyCommand("PEXPIRETIME", conflictingKey), token)).AsInt64()
             );
-            Assert.Equal(-1, (await source.ExecuteAsync(new ValkeyCommand("PTTL", conflictingKey), token)).AsInt64());
+            var sourceConflictTtl = (
+                await source.ExecuteAsync(new ValkeyCommand("PTTL", conflictingKey), token)
+            ).AsInt64();
+            if (loseAcknowledgment)
+            {
+                Assert.InRange(sourceConflictTtl, 1, 120000);
+            }
+            else
+            {
+                Assert.Equal(-1, sourceConflictTtl);
+            }
             Assert.InRange(
                 (await ExecuteBusyKeyTargetAsync(target, new ValkeyCommand("PTTL", movingKey), token)).AsInt64(),
                 1,
@@ -153,7 +209,7 @@ public sealed partial class ValkeyClusterIntegrationTests
             Assert.InRange(
                 (await ExecuteBusyKeyTargetAsync(target, new ValkeyCommand("PTTL", conflictingKey), token)).AsInt64(),
                 1,
-                90000
+                loseAcknowledgment ? 121000 : 90000
             );
             Assert.Equal(
                 "ASK",
@@ -210,8 +266,11 @@ public sealed partial class ValkeyClusterIntegrationTests
                     .AsInt64()
             );
         }
+        var duplicateExpiryShift = loseAcknowledgment
+            ? (conflictExpiry - sourceConflictExpiry).ToString(CultureInfo.InvariantCulture)
+            : "not-applicable";
         output?.WriteLine(
-            $"slot={slot}; conflict_first={conflictFirst}; moving_expiry_shift_ms={targetExpiry - sourceExpiry}; conflict_expiry_shift_ms=0; source_conflict_persistent=true; losses=0; attempts=0; relocations=0; dropped=0"
+            $"slot={slot}; conflict_first={conflictFirst}; ack_loss={loseAcknowledgment}; moving_expiry_shift_ms={targetExpiry - sourceExpiry}; source_conflict_expiry_shift_ms=0; destination_conflict_vs_source_ms={duplicateExpiryShift}; losses=0; attempts=0; relocations=0; dropped=0"
         );
         // Teardown only: no production conflict-resolution policy. Delete each exact known copy.
         Assert.Equal(

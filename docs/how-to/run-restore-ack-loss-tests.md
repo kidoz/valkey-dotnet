@@ -43,7 +43,8 @@ timeout; delivery after the fault is not a claim of uninterrupted low-latency pu
 
 ## Bounds and cleanup
 
-This is a single-connection fault tool, not a general RESP proxy. Its parser accepts only flat
+This runner uses the relay's single-key mode; the [bulk runner](run-bulk-ack-loss-tests.md) enables
+exactly two expected keys. This is a single-connection fault tool, not a general RESP proxy. Its parser accepts only flat
 arrays of two/four bulk strings, up to 8 KiB per bulk and 16 KiB per command, with strict CRLF and
 unsigned length framing. Both commands are validated before either is forwarded. The fixed
 RESTORE key is at most 512 bytes, TTL is 1–120000 ms, and payload is 1–8192 bytes. Replies must be
@@ -63,6 +64,7 @@ cached. Forced termination may need manual cleanup of the exact printed project;
 Without `VALKEYDOTNET_RUN_RESTORE_ACK_LOSS_TESTS=1` the live cases skip. The manual **RESTORE
 acknowledgment loss** workflow uploads `artifacts/resilience/restore-ack-loss.trx`. See the
 [execution record](../reference/resilience-evidence.md) for measured scope. Two-key BUSYKEY partial
-success has a [separate runner](run-bulk-conflict-tests.md); bulk IOERR, concurrent mutation, TLS,
+success has a [separate runner](run-bulk-conflict-tests.md), as does
+[bulk partial acknowledgment followed by IOERR](run-bulk-ack-loss-tests.md). Concurrent mutation, TLS,
 other server versions, and a production conflict-resolution policy remain separate work.
 No shipping library dependency, API, or retry behavior is changed by this test utility.

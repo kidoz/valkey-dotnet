@@ -17,6 +17,10 @@
 
 ### Added
 
+- Opt-in bulk RESTORE acknowledgment-loss runner and manual workflow: confirm one key transfer,
+  withhold the second restore reply, and independently reconcile moved/duplicate binary keys,
+  expirations, and original RESP2/RESP3 sharded streams without replay or cutover.
+
 - Opt-in two-key bulk MIGRATE conflict runner and manual workflow: reconcile a successful transfer
   alongside an unchanged conflicting key in both batch orders and RESP2/RESP3, without replay,
   overwrite, or cutover; verify binary values, expirations, routing, and original sharded streams.

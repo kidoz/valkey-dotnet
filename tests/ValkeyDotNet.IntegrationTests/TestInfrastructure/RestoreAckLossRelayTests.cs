@@ -4,7 +4,7 @@ using ValkeyDotNet.MigrationRelay;
 
 namespace ValkeyDotNet.IntegrationTests.TestInfrastructure;
 
-public sealed class RestoreAckLossRelayTests
+public sealed partial class RestoreAckLossRelayTests
 {
     [Theory]
     [InlineData(1)]
@@ -179,7 +179,7 @@ public sealed class RestoreAckLossRelayTests
         return stream.ToArray();
     }
 
-    private sealed class DuplexStream(byte[] input, int fragment) : Stream
+    private sealed class DuplexStream(byte[] input, int fragment, bool waitAtEnd = false) : Stream
     {
         private readonly MemoryStream _input = new(input);
         private readonly MemoryStream _output = new();
@@ -197,8 +197,17 @@ public sealed class RestoreAckLossRelayTests
         public override int Read(byte[] buffer, int offset, int count) =>
             _input.Read(buffer, offset, Math.Min(count, fragment));
 
-        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
-            _input.ReadAsync(buffer[..Math.Min(buffer.Length, fragment)], cancellationToken);
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default
+        )
+        {
+            if (waitAtEnd && _input.Position == _input.Length)
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+            return await _input.ReadAsync(buffer[..Math.Min(buffer.Length, fragment)], cancellationToken);
+        }
 
         public override void Write(byte[] buffer, int offset, int count) => _output.Write(buffer, offset, count);
 

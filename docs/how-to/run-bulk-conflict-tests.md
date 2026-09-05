@@ -60,6 +60,7 @@ After forced termination, inspect the exact printed project before manual cleanu
 
 The live cases skip unless `VALKEYDOTNET_RUN_BULK_CONFLICT_TESTS=1`. The manual **Bulk MIGRATE conflict**
 workflow uploads `artifacts/resilience/bulk-conflict.trx`. See the
-[execution record](../reference/resilience-evidence.md) for measured scope. Bulk IOERR/reply loss,
-concurrent mutation, larger batches, other data types, TLS, other versions, and production winner
+[execution record](../reference/resilience-evidence.md) for measured scope. A
+[separate bulk acknowledgment-loss runner](run-bulk-ack-loss-tests.md) covers one confirmed transfer
+followed by IOERR. Concurrent mutation, larger batches, other data types, TLS, other versions, and production winner
 selection remain separate work. No shipping API, dependency, parsing bound, or retry policy changes.

@@ -3,7 +3,7 @@ using System.Text;
 
 namespace ValkeyDotNet.MigrationRelay;
 
-// Intentionally accepts only SELECT 0 followed by one bounded RESTORE-ASKING, not general RESP.
+// Only SELECT 0 and one or two expected RESTORE-ASKING frames; never a general RESP proxy.
 internal static class RestoreAckLossRelay
 {
     internal static async Task RunAsync(
@@ -11,9 +11,20 @@ internal static class RestoreAckLossRelay
         Stream destination,
         byte[] key,
         Action<string> report,
-        CancellationToken token
+        CancellationToken token,
+        byte[]? acknowledgedKey = null
     )
     {
+        if (
+            key.Length is < 1 or > 512
+            || (
+                acknowledgedKey is not null
+                && (acknowledgedKey.Length is < 1 or > 512 || acknowledgedKey.AsSpan().SequenceEqual(key))
+            )
+        )
+        {
+            throw new ArgumentException("Expected one or two distinct bounded keys.");
+        }
         var select = await ReadCommandAsync(sender, 2, token).ConfigureAwait(false);
         if (
             !select.Arguments[0].AsSpan().SequenceEqual("SELECT"u8)
@@ -22,6 +33,35 @@ internal static class RestoreAckLossRelay
         {
             throw new InvalidOperationException("Expected SELECT 0.");
         }
+        // Validate the entire expected request before forwarding even SELECT.
+        var acknowledged = acknowledgedKey is null
+            ? null
+            : await ReadRestoreAsync(sender, acknowledgedKey, token).ConfigureAwait(false);
+        var restore = await ReadRestoreAsync(sender, key, token).ConfigureAwait(false);
+        await destination.WriteAsync(select.Wire, token).ConfigureAwait(false);
+        await ReadOkAsync(destination, token).ConfigureAwait(false);
+        await sender.WriteAsync("+OK\r\n"u8.ToArray(), token).ConfigureAwait(false);
+        if (acknowledged is not null)
+        {
+            await destination.WriteAsync(acknowledged, token).ConfigureAwait(false);
+            await ReadOkAsync(destination, token).ConfigureAwait(false);
+            await sender.WriteAsync("+OK\r\n"u8.ToArray(), token).ConfigureAwait(false);
+            report("RESTORE_ACK_FORWARDED");
+        }
+        await destination.WriteAsync(restore, token).ConfigureAwait(false);
+        await ReadOkAsync(destination, token).ConfigureAwait(false);
+        report("RESTORE_ACK_WITHHELD");
+        // Keep the link open until MIGRATE's idle timeout, avoiding the server's non-timeout retry path.
+        var extra = new byte[1];
+        if (await sender.ReadAsync(extra, token).ConfigureAwait(false) != 0)
+        {
+            throw new InvalidOperationException("Unexpected extra transfer bytes.");
+        }
+        report("SENDER_CLOSED");
+    }
+
+    private static async Task<byte[]> ReadRestoreAsync(Stream sender, byte[] key, CancellationToken token)
+    {
         var restore = await ReadCommandAsync(sender, 4, token).ConfigureAwait(false);
         if (
             !restore.Arguments[0].AsSpan().SequenceEqual("RESTORE-ASKING"u8)
@@ -38,19 +78,7 @@ internal static class RestoreAckLossRelay
         {
             throw new InvalidOperationException("Unexpected restore command, key, TTL, or payload bound.");
         }
-        await destination.WriteAsync(select.Wire, token).ConfigureAwait(false);
-        await ReadOkAsync(destination, token).ConfigureAwait(false);
-        await sender.WriteAsync("+OK\r\n"u8.ToArray(), token).ConfigureAwait(false);
-        await destination.WriteAsync(restore.Wire, token).ConfigureAwait(false);
-        await ReadOkAsync(destination, token).ConfigureAwait(false);
-        report("RESTORE_ACK_WITHHELD");
-        // Keep the link open until MIGRATE's idle timeout, avoiding the server's non-timeout retry path.
-        var extra = new byte[1];
-        if (await sender.ReadAsync(extra, token).ConfigureAwait(false) != 0)
-        {
-            throw new InvalidOperationException("Unexpected extra transfer bytes.");
-        }
-        report("SENDER_CLOSED");
+        return restore.Wire;
     }
 
     private static async Task ReadOkAsync(Stream stream, CancellationToken token)

@@ -7,15 +7,12 @@ internal static class Program
 {
     private static async Task Main(string[] args)
     {
-        if (Environment.GetEnvironmentVariable("VALKEYDOTNET_OWNED_RELAY") != "1" || args.Length != 1)
+        if (Environment.GetEnvironmentVariable("VALKEYDOTNET_OWNED_RELAY") != "1" || args.Length is < 1 or > 2)
         {
             throw new InvalidOperationException("This relay requires the owned Docker test harness.");
         }
-        var key = Convert.FromBase64String(args[0]);
-        if (key.Length is < 1 or > 512 || !key.AsSpan().StartsWith("{valkey-dotnet-migration-tests-"u8))
-        {
-            throw new InvalidOperationException("Invalid owned relay key.");
-        }
+        var key = DecodeKey(args[0]);
+        var acknowledgedKey = args.Length == 2 ? DecodeKey(args[1]) : null;
         using var lifetime = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         using var listener = new TcpListener(IPAddress.Any, 6380);
         listener.Start(1);
@@ -25,7 +22,28 @@ internal static class Program
         using var destination = new TcpClient();
         await destination.ConnectAsync("node-2", 6379, lifetime.Token).ConfigureAwait(false);
         await RestoreAckLossRelay
-            .RunAsync(sender.GetStream(), destination.GetStream(), key, Console.WriteLine, lifetime.Token)
+            .RunAsync(
+                sender.GetStream(),
+                destination.GetStream(),
+                key,
+                Console.WriteLine,
+                lifetime.Token,
+                acknowledgedKey
+            )
             .ConfigureAwait(false);
+    }
+
+    private static byte[] DecodeKey(string encoded)
+    {
+        if (encoded.Length > 684)
+        {
+            throw new InvalidOperationException("Invalid encoded key bound.");
+        }
+        var key = Convert.FromBase64String(encoded);
+        if (key.Length is < 1 or > 512 || !key.AsSpan().StartsWith("{valkey-dotnet-migration-tests-"u8))
+        {
+            throw new InvalidOperationException("Invalid owned relay key.");
+        }
+        return key;
     }
 }
