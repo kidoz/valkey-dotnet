@@ -17,6 +17,10 @@
 
 ### Added
 
+- Opt-in RESTORE acknowledgment-loss runner and manual workflow: withhold one confirmed
+  destination success reply, observe received IOERR and both retained binary copies/expirations,
+  and preserve RESP2/RESP3 sharded streams without replay, overwrite, or cutover.
+
 - Opt-in source-only MIGRATE IOERR runner and manual workflow: observe a blocked destination
   restore, require transfer-socket closure before unpause, independently reconcile placement,
   and preserve data/expiration and RESP2/RESP3 streams without replay or cutover.

@@ -70,6 +70,13 @@ test-migrate-ioerr:
     -method '*OwnedMigrateIoErrorBeforeRestorePreservesSourceDataAndStream' \
     -showLiveOutput -result-trx artifacts/resilience/migrate-ioerr.trx
 
+# Withhold one successful RESTORE acknowledgment and independently observe both retained copies.
+test-restore-ack-loss:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_RESTORE_ACK_LOSS_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedLostRestoreAcknowledgmentPreservesDuplicateCopiesAndSourceStream' \
+    -showLiveOutput -result-trx artifacts/resilience/restore-ack-loss.trx
+
 # Reject one conflicting transfer and preserve both owned copies without REPLACE or replay.
 test-busykey:
     mkdir -p artifacts/resilience

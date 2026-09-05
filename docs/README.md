@@ -46,6 +46,8 @@ Destination conflicts: [run isolated MIGRATE BUSYKEY tests](how-to/run-busykey-t
 
 Server transfer timeouts: [run isolated source-only MIGRATE IOERR tests](how-to/run-migrate-ioerr-tests.md).
 
+Duplicate copies after transfer timeout: [run isolated RESTORE acknowledgment-loss tests](how-to/run-restore-ack-loss-tests.md).
+
 Repeated recovery: [run isolated resubscribe soak tests](how-to/run-resubscribe-soak-tests.md).
 
 Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).

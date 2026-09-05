@@ -3,6 +3,14 @@
         <AssemblyName>ValkeyDotNet.IntegrationTests</AssemblyName>
     </PropertyGroup>
     <ItemGroup>
+        <ProjectReference
+            Include="../../dev/ValkeyDotNet.MigrationRelay/ValkeyDotNet.MigrationRelay.csproj"
+            ReferenceOutputAssembly="false"
+        />
+        <Compile
+            Include="../../dev/ValkeyDotNet.MigrationRelay/RestoreAckLossRelay.cs"
+            Link="TestInfrastructure/RestoreAckLossRelay.cs"
+        />
         <None
             Include="../../dev/docker-compose.migration.yml"
             Link="docker-compose.migration.yml"
@@ -14,4 +22,10 @@
             CopyToOutputDirectory="PreserveNewest"
         />
     </ItemGroup>
+    <Target Name="CopyMigrationRelay" AfterTargets="Build">
+        <ItemGroup>
+            <RelayFiles Include="$(MSBuildThisFileDirectory)../../dev/ValkeyDotNet.MigrationRelay/bin/$(Configuration)/net10.0/ValkeyDotNet.MigrationRelay.*" />
+        </ItemGroup>
+        <Copy SourceFiles="@(RelayFiles)" DestinationFolder="$(OutDir)MigrationRelay" />
+    </Target>
 </Project>

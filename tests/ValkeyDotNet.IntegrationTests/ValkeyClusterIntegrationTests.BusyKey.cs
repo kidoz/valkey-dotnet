@@ -11,16 +11,34 @@ public sealed partial class ValkeyClusterIntegrationTests
     [InlineData(ValkeyProtocol.Resp3)]
     public async Task OwnedBusyKeyRejectionPreservesConflictingCopiesAndSourceStream(ValkeyProtocol protocol)
     {
-        if (Environment.GetEnvironmentVariable("VALKEYDOTNET_RUN_BUSYKEY_TESTS") != "1")
+        await VerifyOwnedConflictingCopiesAsync(protocol, loseRestoreAcknowledgment: false);
+    }
+
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
+    public async Task OwnedLostRestoreAcknowledgmentPreservesDuplicateCopiesAndSourceStream(ValkeyProtocol protocol)
+    {
+        await VerifyOwnedConflictingCopiesAsync(protocol, loseRestoreAcknowledgment: true);
+    }
+
+    private static async Task VerifyOwnedConflictingCopiesAsync(ValkeyProtocol protocol, bool loseRestoreAcknowledgment)
+    {
+        var flag = loseRestoreAcknowledgment
+            ? "VALKEYDOTNET_RUN_RESTORE_ACK_LOSS_TESTS"
+            : "VALKEYDOTNET_RUN_BUSYKEY_TESTS";
+        if (Environment.GetEnvironmentVariable(flag) != "1")
         {
-            Assert.Skip("Set VALKEYDOTNET_RUN_BUSYKEY_TESTS=1 to test a conflict in a fresh owned Docker cluster.");
+            Assert.Skip($"Set {flag}=1 to test copies in a fresh owned Docker cluster.");
         }
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromMinutes(5));
         var token = deadline.Token;
         await using var cluster = new MigrationValkeyCluster();
         var output = TestContext.Current.TestOutputHelper;
-        output?.WriteLine($"Owned BUSYKEY project: {cluster.Project}; protocol={protocol}");
+        output?.WriteLine(
+            $"Owned copy-reconciliation project: {cluster.Project}; protocol={protocol}; restore_ack_loss={loseRestoreAcknowledgment}"
+        );
         await cluster.StartNewAsync(token);
         for (var node = 0; node < 3; node++)
         {
@@ -38,7 +56,7 @@ public sealed partial class ValkeyClusterIntegrationTests
         var slot = ValkeyClusterClient.GetHashSlot(key);
         var number = slot.ToString(CultureInfo.InvariantCulture);
         var sourceValue = Enumerable.Range(0, 4096).Select(index => (byte)(index % 256)).ToArray();
-        byte[] targetValue = [255, 0, 13, 10, 99];
+        byte[] targetValue = loseRestoreAcknowledgment ? sourceValue : [255, 0, 13, 10, 99];
         var stationary = Encoding.UTF8.GetBytes(FindKey(cluster.Project + "-stationary", 10923, 16383));
         await using var commands = await ValkeyClusterClient.ConnectAsync(cluster.Options(protocol), token);
         await using var source = await ValkeyClient.ConnectAsync(cluster.NodeOptions(0, protocol), token);
@@ -72,25 +90,39 @@ public sealed partial class ValkeyClusterIntegrationTests
         await VerifyDeliveryAsync(commands, channel, messages, 0, token);
         await VerifyDeliveryAsync(commands, stationary, stationaryMessages, 0, token);
         await cluster.BeginSlotMigrationAsync(slot, 0, 1, 1, token);
-        // Create exactly one known conflicting copy in the IMPORTING node. NX forbids an overwrite.
-        Assert.Equal(
-            "OK",
-            (
-                await ExecuteBusyKeyTargetAsync(
-                    target,
-                    new ValkeyCommand("SET", key, targetValue, "NX", "PX", "90000"),
-                    token
-                )
-            ).AsString()
-        );
+        if (loseRestoreAcknowledgment)
+        {
+            await cluster.LoseOwnedRestoreAcknowledgmentAsync(key, protocol, token);
+        }
+        else
+        {
+            // Create exactly one known conflicting copy in the IMPORTING node. NX forbids an overwrite.
+            Assert.Equal(
+                "OK",
+                (
+                    await ExecuteBusyKeyTargetAsync(
+                        target,
+                        new ValkeyCommand("SET", key, targetValue, "NX", "PX", "90000"),
+                        token
+                    )
+                ).AsString()
+            );
+        }
         var targetExpiry = (
             await ExecuteBusyKeyTargetAsync(target, new ValkeyCommand("PEXPIRETIME", key), token)
         ).AsInt64();
         Assert.True(targetExpiry > 0);
-        Assert.NotEqual(sourceExpiry, targetExpiry);
+        if (loseRestoreAcknowledgment)
+        {
+            Assert.InRange(targetExpiry - sourceExpiry, -1000, 1000);
+        }
+        else
+        {
+            Assert.NotEqual(sourceExpiry, targetExpiry);
+        }
         for (var phase = 0; phase < 2; phase++)
         {
-            if (phase == 1)
+            if (phase == 1 && !loseRestoreAcknowledgment)
             {
                 await cluster.RejectOwnedConflictingMigrationAsync(key, protocol, token);
             }
@@ -115,7 +147,7 @@ public sealed partial class ValkeyClusterIntegrationTests
             Assert.InRange(
                 (await ExecuteBusyKeyTargetAsync(target, new ValkeyCommand("PTTL", key), token)).AsInt64(),
                 1,
-                90000
+                loseRestoreAcknowledgment ? 121000 : 90000
             );
             foreach (var node in new[] { source, target })
             {
@@ -158,7 +190,7 @@ public sealed partial class ValkeyClusterIntegrationTests
             );
         }
         output?.WriteLine(
-            $"slot={slot}; conflict=retained; source_bytes=4096; destination_bytes=5; source_expiry_shift_ms=0; destination_expiry_shift_ms=0; losses=0; attempts=0; relocations=0; dropped=0"
+            $"slot={slot}; copies=retained; source_bytes=4096; destination_bytes={targetValue.Length}; source_expiry_shift_ms=0; destination_vs_source_expiry_ms={targetExpiry - sourceExpiry}; restore_ack_loss={loseRestoreAcknowledgment}; losses=0; attempts=0; relocations=0; dropped=0"
         );
         // Teardown only, not a production conflict-resolution policy: delete the two known fixture copies.
         Assert.Equal(1, (await ExecuteBusyKeyTargetAsync(target, new ValkeyCommand("DEL", key), token)).AsInt64());

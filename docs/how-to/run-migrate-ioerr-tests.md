@@ -62,5 +62,5 @@ the exact printed project before manual cleanup; never prune global Docker resou
 Ordinary tests skip unless `VALKEYDOTNET_RUN_MIGRATE_IOERR_TESTS=1`. The manual **MIGRATE IOERR**
 workflow uploads `artifacts/resilience/migrate-ioerr.trx`. See the
 [execution record](../reference/resilience-evidence.md) for measured scope. Lost RESTORE acknowledgments
-leaving duplicate copies, bulk partial success, concurrent writers, TLS, and other server versions
-remain separate experiments.
+leaving duplicate copies have a [separate runner](run-restore-ack-loss-tests.md). Bulk partial success,
+concurrent writers, TLS, and other server versions remain separate experiments.

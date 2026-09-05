@@ -344,6 +344,7 @@ internal sealed partial class MigrationValkeyCluster : IAsyncDisposable
             return;
         }
         using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await DisposeRestoreRelayAsync(cleanup.Token);
         await DiscoverAndVerifyAsync(cleanup.Token);
         // Remove exact verified IDs, never a project-wide prune or unvalidated external endpoint.
         for (var index = 0; index < _containers.Length; index++)

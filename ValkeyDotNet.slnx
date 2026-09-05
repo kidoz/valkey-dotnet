@@ -1,4 +1,7 @@
 <Solution>
+    <Folder Name="/dev/">
+        <Project Path="dev/ValkeyDotNet.MigrationRelay/ValkeyDotNet.MigrationRelay.csproj" />
+    </Folder>
     <Folder Name="/src/">
         <Project Path="src/ValkeyDotNet/ValkeyDotNet.csproj" />
     </Folder>
