@@ -42,6 +42,8 @@ Migration rollback: [run isolated post-snapshot link-failure tests](how-to/run-a
 
 Ambiguous transfer results: [run isolated MIGRATE reply-loss tests](how-to/run-migrate-reply-loss-tests.md).
 
+Destination conflicts: [run isolated MIGRATE BUSYKEY tests](how-to/run-busykey-tests.md).
+
 Repeated recovery: [run isolated resubscribe soak tests](how-to/run-resubscribe-soak-tests.md).
 
 Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).

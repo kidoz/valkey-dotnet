@@ -63,6 +63,13 @@ test-resubscribe-soak $resubscribe_cycles="30":
     -method '*OwnedResubscribeSoakPreservesStreamsAndBoundsSettledResources' \
     -showLiveOutput -result-trx artifacts/resilience/resubscribe-soak.trx
 
+# Reject one conflicting transfer and preserve both owned copies without REPLACE or replay.
+test-busykey:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_BUSYKEY_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedBusyKeyRejectionPreservesConflictingCopiesAndSourceStream' \
+    -showLiveOutput -result-trx artifacts/resilience/busykey.trx
+
 # Lose one completed MIGRATE reply and reconcile node-local placement without replay.
 test-migrate-reply-loss:
     mkdir -p artifacts/resilience

@@ -17,6 +17,10 @@
 
 ### Added
 
+- Opt-in MIGRATE BUSYKEY runner and manual workflow: verify a wrapped destination conflict,
+  preserved binary copies/expirations, one migration attempt, reusable command connection, and
+  unchanged RESP2/RESP3 sharded streams without overwrite, replay, or cutover.
+
 - Opt-in bounded resubscribe soak runner and manual workflow: retain RESP2/RESP3 sharded streams
   through repeated relocation, check exact settled connection/registration counts, and record
   post-warm-up heap, handle, working-set, and thread-pool resource samples.
