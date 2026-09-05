@@ -119,6 +119,13 @@ test-atomic-writes:
     -method '*OwnedAtomicMigrationPreservesConcurrentWritesExpiryAndShardStream' \
     -showLiveOutput -result-trx artifacts/resilience/atomic-writes.trx
 
+# Prove two writes are queued during atomic write pause and settle after ownership cutover.
+test-cutover-writes:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_CUTOVER_WRITES_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedAtomicMigrationPreservesWritesQueuedAcrossCutover' \
+    -showLiveOutput -result-trx artifacts/resilience/cutover-writes.trx
+
 # Cancel one owned atomic migration before transfer and verify unchanged data and sharded delivery.
 test-atomic-cancellation:
     mkdir -p artifacts/resilience

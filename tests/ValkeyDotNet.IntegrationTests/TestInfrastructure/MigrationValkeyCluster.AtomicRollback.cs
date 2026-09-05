@@ -20,13 +20,32 @@ internal sealed partial class MigrationValkeyCluster
         CancellationToken token
     ) => RunHeldAtomicSlotMigrationAsync(expiringKey, persistentKey, protocol, writeDuringImport, false, token);
 
+    internal Task CompleteAtomicSlotMigrationAcrossCutoverAsync(
+        byte[] expiringKey,
+        byte[] persistentKey,
+        ValkeyProtocol protocol,
+        Func<CancellationToken, Task> writeBeforePause,
+        Func<Func<Task>, CancellationToken, Task> writeDuringPause,
+        CancellationToken token
+    ) =>
+        RunHeldAtomicSlotMigrationAsync(
+            expiringKey,
+            persistentKey,
+            protocol,
+            writeBeforePause,
+            false,
+            token,
+            writeDuringPause
+        );
+
     private async Task RunHeldAtomicSlotMigrationAsync(
         byte[] expiringKey,
         byte[] persistentKey,
         ValkeyProtocol protocol,
         Func<CancellationToken, Task> verifyDuringImport,
         bool failExport,
-        CancellationToken token
+        CancellationToken token,
+        Func<Func<Task>, CancellationToken, Task>? writeDuringPause = null
     )
     {
         ValidateTransferKey(expiringKey);
@@ -138,7 +157,47 @@ internal sealed partial class MigrationValkeyCluster
             );
             if (!failExport)
             {
-                Assert.Equal("OK", await CommandAsync(0, ["DEBUG", "SLOTMIGRATION", "PREVENT-PAUSE", "0"], bounded));
+                if (writeDuringPause is null)
+                {
+                    Assert.Equal(
+                        "OK",
+                        await CommandAsync(0, ["DEBUG", "SLOTMIGRATION", "PREVENT-PAUSE", "0"], bounded)
+                    );
+                }
+                else
+                {
+                    await RunPausedCutoverAsync(
+                        source,
+                        async pauseToken =>
+                        {
+                            var state = AtomicJobState(
+                                await ReadJobAsync(source, pauseToken),
+                                "EXPORT",
+                                slot,
+                                sourceId,
+                                targetId,
+                                jobName
+                            );
+                            Assert.False(state is "success" or "failed" or "cancelled");
+                            Assert.False(
+                                AtomicJobState(
+                                    await ReadJobAsync(target, pauseToken),
+                                    "IMPORT",
+                                    slot,
+                                    sourceId,
+                                    targetId,
+                                    jobName
+                                )
+                                    is "success"
+                                        or "failed"
+                                        or "cancelled"
+                            );
+                            return state == "failover-granted";
+                        },
+                        writeDuringPause,
+                        bounded
+                    );
+                }
                 while (true)
                 {
                     var exported = ValidateAtomicJob(
@@ -166,7 +225,7 @@ internal sealed partial class MigrationValkeyCluster
                 await VerifyMigrationAsync(slot, 0, 1, 0, bounded, expectedTargetKeys: 2);
                 await WaitHealthyAsync(bounded);
                 TestContext.Current.TestOutputHelper?.WriteLine(
-                    $"atomic_job={jobName}; slot={slot}; provisional_keys=2; export_state=success; import_state=success; writes_stage=waiting-to-pause"
+                    $"atomic_job={jobName}; slot={slot}; provisional_keys=2; export_state=success; import_state=success; writes_stage={(writeDuringPause is null ? "waiting-to-pause" : "across-cutover")}"
                 );
                 return;
             }

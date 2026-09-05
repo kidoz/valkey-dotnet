@@ -38,6 +38,8 @@ Atomic migration: [run isolated atomic slot-migration tests](how-to/run-atomic-m
 
 Concurrent mutation: [run isolated post-snapshot atomic writer tests](how-to/run-atomic-writes-tests.md).
 
+Cutover writers: [run isolated queued-write handoff tests](how-to/run-cutover-writes-tests.md).
+
 Migration cancellation: [run isolated pre-transfer cancellation tests](how-to/run-atomic-cancellation-tests.md).
 
 Migration rollback: [run isolated post-snapshot link-failure tests](how-to/run-atomic-rollback-tests.md).

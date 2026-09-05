@@ -17,6 +17,10 @@
 
 ### Added
 
+- Opt-in atomic cutover writer runner and manual workflow: observe two exact writers blocked
+  during migration write pause, then verify acknowledgments, binary values, expiration, and original
+  sharded streams after handoff, with bounded cleanup and explicit failure-outcome accounting.
+
 - Opt-in atomic migration concurrent-writer runner and manual workflow: acknowledge 64 bounded
   binary updates after snapshot import, then verify final values, unchanged expiration, and
   original RESP2/RESP3 sharded streams after cutover.

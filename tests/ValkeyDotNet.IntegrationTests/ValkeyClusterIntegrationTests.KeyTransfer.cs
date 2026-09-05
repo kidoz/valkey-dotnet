@@ -33,6 +33,14 @@ public sealed partial class ValkeyClusterIntegrationTests
     [Theory]
     [InlineData(ValkeyProtocol.Resp2)]
     [InlineData(ValkeyProtocol.Resp3)]
+    public async Task OwnedAtomicMigrationPreservesWritesQueuedAcrossCutover(ValkeyProtocol protocol)
+    {
+        await VerifyOwnedKeyMigrationAsync(protocol, OwnedMigrationMode.WritesAcrossCutover);
+    }
+
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
     public async Task OwnedAtomicCancellationPreservesSourceKeysExpiryAndShardStream(ValkeyProtocol protocol)
     {
         await VerifyOwnedKeyMigrationAsync(protocol, OwnedMigrationMode.CancelBeforeTransfer);
@@ -59,6 +67,7 @@ public sealed partial class ValkeyClusterIntegrationTests
         Legacy,
         Atomic,
         ConcurrentWritesAfterSnapshot,
+        WritesAcrossCutover,
         CancelBeforeTransfer,
         DisconnectAfterSnapshot,
         LostMigrateReply,
@@ -86,12 +95,14 @@ public sealed partial class ValkeyClusterIntegrationTests
         var cancelBeforeTransfer = mode == OwnedMigrationMode.CancelBeforeTransfer;
         var disconnectAfterSnapshot = mode == OwnedMigrationMode.DisconnectAfterSnapshot;
         var concurrentWrites = mode == OwnedMigrationMode.ConcurrentWritesAfterSnapshot;
+        var cutoverWrites = mode == OwnedMigrationMode.WritesAcrossCutover;
         var retainsSource = cancelBeforeTransfer || disconnectAfterSnapshot || sourceOnlyIoError;
         var flag = mode switch
         {
             OwnedMigrationMode.Legacy => "VALKEYDOTNET_RUN_KEY_TRANSFER_TESTS",
             OwnedMigrationMode.Atomic => "VALKEYDOTNET_RUN_ATOMIC_MIGRATION_TESTS",
             OwnedMigrationMode.ConcurrentWritesAfterSnapshot => "VALKEYDOTNET_RUN_ATOMIC_WRITES_TESTS",
+            OwnedMigrationMode.WritesAcrossCutover => "VALKEYDOTNET_RUN_CUTOVER_WRITES_TESTS",
             OwnedMigrationMode.CancelBeforeTransfer => "VALKEYDOTNET_RUN_ATOMIC_CANCELLATION_TESTS",
             OwnedMigrationMode.LostMigrateReply => "VALKEYDOTNET_RUN_MIGRATE_REPLY_LOSS_TESTS",
             OwnedMigrationMode.SourceOnlyIoError => "VALKEYDOTNET_RUN_MIGRATE_IOERR_TESTS",
@@ -105,7 +116,7 @@ public sealed partial class ValkeyClusterIntegrationTests
         deadline.CancelAfter(TimeSpan.FromMinutes(5));
         var token = deadline.Token;
         await using var cluster = new MigrationValkeyCluster(
-            enableMigrationDebug: disconnectAfterSnapshot || concurrentWrites
+            enableMigrationDebug: disconnectAfterSnapshot || concurrentWrites || cutoverWrites
         );
         TestContext.Current.TestOutputHelper?.WriteLine(
             $"Owned key-migration project: {cluster.Project}; protocol={protocol}; mode={mode}"
@@ -193,6 +204,21 @@ public sealed partial class ValkeyClusterIntegrationTests
         {
             await cluster.BeginSlotMigrationAsync(slot, 0, 1, 2, token);
             await cluster.TimeoutOwnedKeyBeforeRestoreAsync(expiringKey, protocol, token);
+        }
+        else if (cutoverWrites)
+        {
+            (expiringValue, persistentValue) = await VerifyCutoverWritesAsync(
+                cluster,
+                commands,
+                source,
+                expiringKey,
+                expiringValue,
+                persistentKey,
+                persistentValue,
+                originalExpiry,
+                protocol,
+                token
+            );
         }
         else if (concurrentWrites)
         {
