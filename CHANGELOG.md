@@ -17,6 +17,9 @@
 
 ### Added
 
+- Opt-in pre-transfer atomic migration cancellation runner and manual workflow, checking active-to-cancelled
+  job identity, unchanged source keys/expiration/slot maps, and uninterrupted RESP2/RESP3 sharded streams.
+
 - Opt-in atomic slot-migration runner and manual workflow checking correlated EXPORT/IMPORT job
   completion, binary keys and absolute expiration, and same-stream sharded relocation in RESP2/RESP3.
 

@@ -77,46 +77,68 @@ internal sealed partial class MigrationValkeyCluster
             {
                 return false;
             }
-            var job = Assert.Single(jobs);
-            var fields = new Dictionary<string, string>(StringComparer.Ordinal);
-            // RESP2 has alternating fields; RESP3 has a map. Wire bounds remain the client's defaults.
-            if (protocol == ValkeyProtocol.Resp3)
-            {
-                var pairs = job.AsMap();
-                Assert.InRange(pairs.Count, 6, 32);
-                foreach (var pair in pairs)
-                {
-                    AddField(pair.Key, pair.Value);
-                }
-            }
-            else
-            {
-                var values = job.AsArray();
-                Assert.InRange(values.Count, 12, 64);
-                Assert.Equal(0, values.Count % 2);
-                for (var index = 0; index < values.Count; index += 2)
-                {
-                    AddField(values[index], values[index + 1]);
-                }
-            }
+            var fields = ReadAtomicJobFields(Assert.Single(jobs), protocol);
             var success = ValidateAtomicJob(fields, operation, slot, sourceId, targetId, jobName);
             jobName ??= fields["name"];
             return success;
+        }
+    }
 
-            void AddField(RespValue key, RespValue value)
+    private static Dictionary<string, string> ReadAtomicJobFields(RespValue job, ValkeyProtocol protocol)
+    {
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+        // RESP2 has alternating fields; RESP3 has a map. Wire bounds remain the client's defaults.
+        if (protocol == ValkeyProtocol.Resp3)
+        {
+            var pairs = job.AsMap();
+            Assert.InRange(pairs.Count, 6, 32);
+            foreach (var pair in pairs)
             {
-                var name = key.AsString();
-                Assert.NotNull(name);
-                var text = name is "name" or "operation" or "slot_ranges" or "source_node" or "target_node" or "state"
-                    ? value.AsString()
-                    : "";
-                Assert.NotNull(text);
-                Assert.True(fields.TryAdd(name, text), "Duplicate atomic migration field.");
+                AddField(pair.Key, pair.Value);
             }
+        }
+        else
+        {
+            var values = job.AsArray();
+            Assert.InRange(values.Count, 12, 64);
+            Assert.Equal(0, values.Count % 2);
+            for (var index = 0; index < values.Count; index += 2)
+            {
+                AddField(values[index], values[index + 1]);
+            }
+        }
+        return fields;
+
+        void AddField(RespValue key, RespValue value)
+        {
+            var name = key.AsString();
+            Assert.NotNull(name);
+            var text = name is "name" or "operation" or "slot_ranges" or "source_node" or "target_node" or "state"
+                ? value.AsString()
+                : "";
+            Assert.NotNull(text);
+            Assert.True(fields.TryAdd(name, text), "Duplicate atomic migration field.");
         }
     }
 
     internal static bool ValidateAtomicJob(
+        IReadOnlyDictionary<string, string> fields,
+        string operation,
+        int slot,
+        string sourceId,
+        string targetId,
+        string? expectedName
+    )
+    {
+        var state = AtomicJobState(fields, operation, slot, sourceId, targetId, expectedName);
+        if (state is "failed" or "cancelled")
+        {
+            throw new InvalidOperationException("The owned atomic migration failed or was cancelled.");
+        }
+        return state == "success";
+    }
+
+    internal static string AtomicJobState(
         IReadOnlyDictionary<string, string> fields,
         string operation,
         int slot,
@@ -144,10 +166,6 @@ internal sealed partial class MigrationValkeyCluster
         {
             throw new InvalidOperationException("An unexpected atomic migration job was returned.");
         }
-        if (state is "failed" or "cancelled")
-        {
-            throw new InvalidOperationException("The owned atomic migration failed or was cancelled.");
-        }
-        return state == "success";
+        return state;
     }
 }

@@ -55,6 +55,13 @@ test-migration $migration_cycles="3":
     -method '*OwnedSlotMigrationPreservesShardedHandleAndStream' \
     -showLiveOutput -result-trx artifacts/resilience/migration.trx
 
+# Cancel one owned atomic migration before transfer and verify unchanged data and sharded delivery.
+test-atomic-cancellation:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_ATOMIC_CANCELLATION_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedAtomicCancellationPreservesSourceKeysExpiryAndShardStream' \
+    -showLiveOutput -result-trx artifacts/resilience/atomic-cancellation.trx
+
 # Atomically move one owned slot and verify job completion, binary data, expiry, and sharded delivery.
 test-atomic-migration:
     mkdir -p artifacts/resilience

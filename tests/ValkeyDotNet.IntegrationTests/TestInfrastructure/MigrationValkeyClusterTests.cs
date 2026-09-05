@@ -6,6 +6,76 @@ public sealed class MigrationValkeyClusterTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task RefusesAtomicCancellationBeforeOwnedClusterInitialization(bool includeReplica)
+    {
+        await using var cluster = new MigrationValkeyCluster(includeReplica);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cluster.CancelAtomicSlotMigrationBeforeTransferAsync(
+                0,
+                0,
+                1,
+                ValkeyProtocol.Resp3,
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Theory]
+    [InlineData(-1, 0, 1)]
+    [InlineData(16384, 0, 1)]
+    [InlineData(0, -1, 1)]
+    [InlineData(0, 0, 3)]
+    [InlineData(0, 1, 1)]
+    public async Task RefusesAtomicCancellationOutsideOwnedSlotAndNodes(int slot, int source, int target)
+    {
+        await using var cluster = new MigrationValkeyCluster();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            cluster.CancelAtomicSlotMigrationBeforeTransferAsync(
+                slot,
+                source,
+                target,
+                ValkeyProtocol.Resp2,
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Theory]
+    [InlineData("cancelled")]
+    [InlineData("failed")]
+    [InlineData("success")]
+    [InlineData("snapshot")]
+    public void AtomicJobStatePreservesTerminalOutcomeWithoutTreatingCancellationAsSuccess(string state)
+    {
+        var fields = AtomicJobFields();
+        fields["state"] = state;
+        Assert.Equal(
+            state,
+            MigrationValkeyCluster.AtomicJobState(
+                fields,
+                "EXPORT",
+                42,
+                new string('b', 40),
+                new string('c', 40),
+                fields["name"]
+            )
+        );
+        fields["target_node"] = new string('d', 40);
+        Assert.Throws<InvalidOperationException>(() =>
+            MigrationValkeyCluster.AtomicJobState(
+                fields,
+                "EXPORT",
+                42,
+                new string('b', 40),
+                new string('c', 40),
+                fields["name"]
+            )
+        );
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task RefusesAtomicMigrationBeforeOwnedClusterInitialization(bool includeReplica)
     {
         await using var cluster = new MigrationValkeyCluster(includeReplica);

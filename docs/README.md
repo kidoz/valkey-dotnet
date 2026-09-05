@@ -36,6 +36,8 @@ Data migration: [run isolated nonempty-key transfer tests](how-to/run-key-transf
 
 Atomic migration: [run isolated atomic slot-migration tests](how-to/run-atomic-migration-tests.md).
 
+Migration cancellation: [run isolated pre-transfer cancellation tests](how-to/run-atomic-cancellation-tests.md).
+
 Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).
 
 ## Writing docs here
