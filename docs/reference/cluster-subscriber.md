@@ -127,8 +127,12 @@ connections. Duplicate channel handles on separate sockets remain independent.
 ## Verification scope
 
 An opt-in [isolated slot-migration runner](../how-to/run-slot-migration-tests.md) now exercises
-real legacy empty-slot moves while retaining established handles. It has not yet been executed live
-for this increment; the presence of the runner is not migration/failover evidence.
+real legacy empty-slot moves while retaining established handles. On 2026-09-05, both RESP2/RESP3
+cases passed on Valkey 9.1.2: three moves per protocol, six successful relocations, zero local queue
+drops, and verified cleanup of the two fresh clusters. Binary delivery, server registration
+ownership, unchanged streams, and unrelated-channel isolation passed. This is legacy empty-slot
+migration evidence, not primary-failover, forced-ASK, or soak evidence. See the
+[execution record and limits](resilience-evidence.md#slot-migration-runner).
 
 The topology-recovery increment adds 32 scripted loopback cases covering RESP2/RESP3 same-stream
 relocation after transport loss or server shard removal, restoration MOVED/ASK, redirect limits,
@@ -174,4 +178,5 @@ This live success is separate from overall unit-suite readiness: immediate-close
 and rejection regressions failed intermittently during that verification session. A subsequent
 shutdown-isolation change passed the expanded unit suite and repeated runs. See
 [subscriber verification evidence](subscriber.md#verification-evidence).
-Live failover, slot migration, TLS recovery, prolonged soak, and performance evidence remain separate work.
+Live failover, nonempty/atomic slot migration, forced ASK, TLS recovery, prolonged soak, and performance
+evidence remain separate work.

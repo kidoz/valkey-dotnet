@@ -67,8 +67,25 @@ isolation, counters, final unsubscription, and resource cleanup. It is exposed b
 and the manual **Slot migration** workflow. The default is three moves per protocol, with a maximum
 of twenty and a five-minute deadline per case.
 
-The runner is implemented, but live execution has not yet been performed for this increment.
-Build and deterministic checks do not establish real slot-migration success. Atomic migration,
-nonempty-key transfer, forced ASK, primary failover, seed unavailability, TLS, and prolonged soak
+On 2026-09-05, `just test-migration 3` passed both live cases on Valkey 9.1.2, with no failures or
+skips: three moves per protocol, six successful relocations total. Each case retained the same
+handle, enumerator, and completion task; binary delivery resumed after every move, the target had
+one shard registration and the source had none, and the unrelated third-primary channel recorded
+no connection loss. Each moving handle recorded three losses, three attempts, three successful
+recoveries/relocations, and zero local queue drops. No library change was needed for this run.
+
+The host was macOS arm64, SDK 10.0.400, runtime .NET 10.0.11; servers ran Linux aarch64 without TLS.
+Each of the two sequentially created clusters had three primaries limited to 128 MiB and one CPU
+per node, random loopback ports, and temporary data filesystems. Before teardown, all nodes had
+zero keys, no shard channels, and no named application connections. Ownership-checked cleanup
+removed all six test containers and both test networks; a subsequent Docker inventory confirmed
+no test resources remained. Existing application container IDs and project-network IDs were retained.
+The TRX record is `artifacts/resilience/migration.trx` (two cases, approximately 31 seconds total).
+Per-move elapsed samples include Docker/admin checks and are not recovery-latency measurements.
+
+`just ci` and the Release unit suite also passed all 435 cases, and all ten harness-only checks
+passed in Release.
+This establishes a small live legacy empty-slot migration smoke test, not general release readiness.
+Atomic migration, nonempty-key transfer, forced ASK, primary failover, seed unavailability, TLS, and prolonged soak
 remain separate evidence requirements. The [run guide](../how-to/run-slot-migration-tests.md)
 describes ownership checks, opt-in controls, and cleanup limits.
