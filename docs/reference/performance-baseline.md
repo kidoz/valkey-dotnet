@@ -7,6 +7,10 @@ Separate [real-server cache/lock observations](roundtrip-performance.md) now cov
 shared-socket contention, request latency percentiles, and process-wide managed allocations.
 They use a different measurement contract and are not directly comparable with these codec numbers.
 
+Separate [GET/pipeline allocation observations](allocation-profile.md) identify allocation stacks
+and record a paired reply-graph control (64 bytes of unfragmented parsing overhead per 1 KiB reply).
+No shipping optimization or change to the original two measurements below is implied.
+
 ## Measurement environment
 
 | Field | Value |

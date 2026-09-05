@@ -69,3 +69,5 @@ same-key contention, and long-running resource behavior are outside this profile
 
 The measurements establish an end-to-end baseline for further allocation profiling; they do not
 identify which objects dominate allocation or establish that any particular optimization is safe.
+Subsequent [allocation profiling](allocation-profile.md) adds stack attribution and an isolated
+codec control without changing this baseline or the shipping library.
