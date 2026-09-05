@@ -142,6 +142,14 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [bulk acknowledgment-loss runner](../how-to/run-bulk-ack-loss-tests.md) passed RESP2/RESP3 on
+Valkey 9.1.2 on 2026-09-05. One confirmed key transfer followed by a withheld second RESTORE reply
+produced IOERR and independently observed destination-only/duplicate-copy placement. Values and
+expiration metadata were preserved, maps stayed source-owned, and original streams survived with
+zero losses/attempts/relocations/drops. No replay, overwrite, cutover, or winner policy ran. This is
+a two-key timeout observation, not concurrent-writer or uninterrupted-publishing evidence. See the
+[execution record](resilience-evidence.md#bulk-restore-acknowledgment-loss--2026-09-05).
+
 The [bulk MIGRATE conflict runner](../how-to/run-bulk-conflict-tests.md) passed all four RESP2/RESP3
 and batch-order cases on Valkey 9.1.2 on 2026-09-05. One key moved despite the batch's received
 BUSYKEY error; both copies of the conflicting key retained their distinct values and TTL semantics.

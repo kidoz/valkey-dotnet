@@ -3,6 +3,50 @@
 This page separates implemented experiments from executed evidence. It is not a cache/lock
 production-readiness certification.
 
+## Bulk RESTORE acknowledgment loss — 2026-09-05
+
+`just test-bulk-ack-loss` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 31.853 seconds, with no
+failures or skips. Each case used three fresh owned primaries and one isolated .NET relay on local
+Docker. Primaries had 128 MiB/one CPU each and DEBUG disabled; the relay retained its 64 MiB/one CPU,
+non-root, read-only, no-capabilities/no-published-ports configuration. The Release client ran on
+macOS arm64 with SDK 10.0.400/.NET 10.0.11; servers ran Linux aarch64 without TLS. The pinned image
+and exact bounds are documented in the [runner controls](../how-to/run-bulk-ack-loss-tests.md).
+
+One two-key MIGRATE batch targeted an initially empty importing node. The relay validated all
+expected frames, forwarded SELECT and the first RESTORE success, received and withheld the second
+RESTORE success, then observed sender closure after the two-second source idle timeout. Its exact
+phase log and zero exit status confirmed the injection. The source returned IOERR/ReplyReceived;
+same-client PING and binary ECHO passed and commandstats showed exactly one MIGRATE call.
+
+Independent reads and exact node-local key/count checks established mixed placement: the first
+4 KiB binary value only at the target; the second five-byte binary value at both source and target.
+Both keys started with 120-second TTLs. In both protocols, the moved key's absolute expiry shifted
++13 ms and the duplicate target copy's expiry shifted +14 ms; source duplicate expiry shifted zero.
+Target expirations remained stable between observations and all TTLs stayed positive. Direct source
+GET for the moved key returned ASK, routed GET found it, and mixed-key MGET returned TRYAGAIN.
+All slot maps stayed source-owned. Original source-local and stationary sharded streams, completion
+tasks, and enumerators survived with zero losses, attempts, relocations, or local drops.
+
+This is partial acknowledgment followed by received IOERR, not all-key rollback or merely a
+client-facing lost MIGRATE reply. It agrees with the
+[server's per-key acknowledgment handling](https://github.com/valkey-io/valkey/blob/9.1.2/src/cluster.c#L579-L650).
+No replay, overwrite, cutover, or winner selection ran. Source command processing stalls during
+synchronous MIGRATE; post-fault delivery is not a latency guarantee. Concurrent mutation, other loss
+positions, larger batches, other data types, TLS, other versions, and lock correctness remain separate.
+
+Final teardown deleted only the three exact fixture copies, verified zero keys/shard channels/named
+clients, and removed all eight owned containers/two networks. Evidence: `artifacts/resilience/bulk-ack-loss.trx`.
+The manual workflow was added but not dispatched. No shipping API/dependency/parser limit/retry
+behavior changed. The relay remains test-only, now with a fixed two-key mode in addition to its
+single-key mode; it is not an arbitrary command proxy.
+
+All 442 unit tests and 162 server-free harness checks passed Debug/Release, `just ci` passed, and
+both new live cases skipped without opt-in. Six shared single-key acknowledgment-loss and two-key
+BUSYKEY regressions passed in 83.890 seconds (`artifacts/resilience/reconciliation-after-bulk-ack-loss.trx`).
+All reported zero drops; single-key destination expiry shifts were +13 ms for both protocols.
+Across both live runs, twenty-eight owned containers/eight networks were removed. All pre-existing
+Docker containers/networks remained and the three hostloom services stayed healthy. No commit was made.
+
 ## Bulk MIGRATE partial success — 2026-09-05
 
 `just test-bulk-conflict` passed four cases on Valkey 9.1.2 in 52.675 seconds, with no failures or
