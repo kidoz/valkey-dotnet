@@ -7,6 +7,9 @@ Separate [real-server cache/lock observations](roundtrip-performance.md) now cov
 shared-socket contention, request latency percentiles, and process-wide managed allocations.
 They use a different measurement contract and are not directly comparable with these codec numbers.
 
+Separate [notification observations](notification-performance.md) cover publish acknowledgment/delivery
+throughput and default/BCAST tracking delivery latency, with the same bounded owned-server topology.
+
 Separate [GET/pipeline allocation observations](allocation-profile.md) identify allocation stacks
 and record the buffered bulk-length optimization: 64 fewer bytes per unfragmented 1 KiB reply,
 with paired before/after codec and real-server measurements. The original two measurements below
