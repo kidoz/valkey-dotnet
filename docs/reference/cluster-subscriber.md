@@ -47,14 +47,30 @@ runs on a socket reader. A single channel can also share local handles within a 
 
 An initial `MOVED` rejection closes the attempted subscriber, refreshes topology through the existing
 validated discovery parser, and retries the channel's current primary. The initial attempt plus at
-most `Cluster.MaxRedirects` refresh/retry cycles share one operation deadline. Endpoint text from a
-subscriber rejection is discarded, not followed. `EndpointMapper` remains the explicit trust boundary
-for discovered addresses; mapped connections preserve TLS, certificate validation, ACL, protocol,
-client-name, and parser settings from the successful seed.
+most `Cluster.MaxRedirects` redirects (MOVED and ASK combined) share one operation deadline.
+Endpoint text from a MOVED rejection is discarded, not followed.
 
-Initial `ASK` fails with `ValkeyClusterException`; the client does not issue ASKING or transparently
-subscribe during an importing-slot transition. `RefreshTopologyAsync` changes routing for future
-subscriptions only; it does not move, duplicate, or recreate existing streams.
+Initial `ASK` closes the rejected socket, validates the reported slot against the binary channel,
+and opens a dedicated connection to the mapped redirect endpoint. After HELLO/session setup, it
+sends `ASKING`, requires a simple-string `OK`, and sends SSUBSCRIBE next on that same socket.
+There is no intervening application command or shared command connection. ASK does not update slot
+ownership; later subscriptions still begin at the known primary. This follows the
+[ASKING contract](https://valkey.io/commands/asking/) and
+[cluster redirect semantics](https://valkey.io/topics/cluster-spec/#ask-redirection).
+
+ASK redirect text is limited to 1,024 ASCII bytes in addition to the normal RESP limits. Invalid
+slots, ports, host syntax, control bytes, and extra fields fail with sanitized cluster errors.
+DNS names, IPv4, bracketed/unbracketed IPv6, and empty-host redirects are supported; an empty host
+uses the source connection's host. `EndpointMapper` applies before connecting. The mapper and
+server-announced addresses must remain within the cluster's trusted network boundary: redirected
+connections reuse seed TLS, certificate validation, ACL, protocol, client-name, and parser settings.
+Raw redirect text is not included in public exception messages or inner exceptions.
+
+When opted-in same-endpoint recovery replaces an ASK-established socket, it repeats ASKING before
+restoring the one shard registration. A new redirect during restoration remains terminal; it does
+not relocate the established handle. The node-level `ValkeySubscriber` alone does not follow ASK.
+`RefreshTopologyAsync` changes routing for future subscriptions only; it does not move, duplicate,
+or recreate existing streams.
 
 An unsolicited, well-formed SUNSUBSCRIBE for a confirmed channel terminates that node subscriber
 with `ValkeyClusterException`. Malformed acknowledgements or deliveries terminate it with
@@ -82,6 +98,16 @@ the cluster subscriber cancels acquisition, closes every retained stream, and di
 connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
+
+The initial ASK increment passed all 403 unit cases locally on 2026-09-05, including 33 new cases
+for RESP2/RESP3 binary routing, unchanged slot ownership, endpoint mapping, bounded redirect loops,
+ASK-to-MOVED transitions, malformed/oversized redirects, ASKING rejection, timeout/cancellation/
+disposal, TLS/ACL preservation, and repeated ASKING on same-endpoint recovery. These are scripted
+loopback and parser tests; no live ASK/slot-migration experiment was run for this increment.
+The full Release suite also passed all 403 cases, and five repeated runs of the 45 cluster-subscriber
+cases passed without failures or skips. Formatting and Debug/Release builds were clean. Results
+are recorded locally under `artifacts/resilience/sharded-ask/`. Redirect parsing and endpoint trust
+handling require maintainer security review before release.
 
 Deterministic cases cover RESP2/RESP3 binary and fragmented delivery, separate modes, duplicate
 handles, endpoint mapping, initial MOVED refresh, bounded/sanitized redirect failures, unsolicited

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Sockets;
+using ValkeyDotNet.Cluster;
 using ValkeyDotNet.Protocol;
 
 namespace ValkeyDotNet;
@@ -27,6 +28,8 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
     }
 
     private readonly ValkeySubscriberOptions _options;
+    private readonly bool _clusterManaged;
+    private readonly bool _asking;
     private Connection _connection;
     private readonly object _sync = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -47,10 +50,12 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
     private int _operations;
     private long _dropped;
 
-    private ValkeySubscriber(ValkeySubscriberOptions options, Connection connection)
+    private ValkeySubscriber(ValkeySubscriberOptions options, Connection connection, bool clusterManaged, bool asking)
     {
         _options = options;
         _connection = connection;
+        _clusterManaged = clusterManaged;
+        _asking = asking;
     }
 
     public ValkeyProtocol NegotiatedProtocol
@@ -114,10 +119,27 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
         CancellationToken cancellationToken = default
     )
     {
-        options ??= new();
+        return await ConnectCoreAsync(options ?? new(), false, false, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static Task<ValkeySubscriber> ConnectClusterAsync(
+        ValkeySubscriberOptions options,
+        bool asking,
+        CancellationToken cancellationToken
+    ) => ConnectCoreAsync(options, true, asking, cancellationToken);
+
+    private static async Task<ValkeySubscriber> ConnectCoreAsync(
+        ValkeySubscriberOptions options,
+        bool clusterManaged,
+        bool asking,
+        CancellationToken cancellationToken
+    )
+    {
         options.Validate();
-        var connection = await Connection.OpenAsync(options.Connection, cancellationToken).ConfigureAwait(false);
-        var subscriber = new ValkeySubscriber(options, connection);
+        var connection = await Connection
+            .OpenAsync(options.Connection, cancellationToken, asking)
+            .ConfigureAwait(false);
+        var subscriber = new ValkeySubscriber(options, connection, clusterManaged, asking);
         subscriber._readLoop = subscriber.ReadAsync();
         return subscriber;
     }
@@ -499,9 +521,20 @@ public sealed partial class ValkeySubscriber : IAsyncDisposable
                 _pending = null;
                 try
                 {
+                    if (
+                        _clusterManaged
+                        && !restoring
+                        && rejected.Kind == "ssubscribe"
+                        && frame.AsBytes().Span.StartsWith("ASK "u8)
+                    )
+                    {
+                        throw ShardSubscriptionRedirectException.Parse(frame.AsBytes().Span);
+                    }
                     ThrowServerError(frame, _options.UseShardedPubSub);
                 }
-                catch (ValkeyServerException error)
+                catch (Exception error)
+                    when (error is ValkeyServerException or ShardSubscriptionRedirectException or ValkeyClusterException
+                    )
                 {
                     rejected.Completion.TrySetException(error);
                 }

@@ -1,9 +1,11 @@
+using ValkeyDotNet.Cluster;
+
 namespace ValkeyDotNet;
 
 /// <summary>
 /// Routes sharded Pub/Sub to primaries using dedicated sockets, never ordinary command connections.
-/// Each handle owns one socket. Initial MOVED rejection triggers bounded topology refresh; ASK and
-/// established-subscription topology changes are explicit failures, not silent relocation.
+/// Each handle owns one socket. Initial MOVED refresh and ASK redirection are bounded;
+/// established-subscription topology changes remain explicit failures, not silent relocation.
 /// </summary>
 public sealed class ValkeyClusterSubscriber : IAsyncDisposable
 {
@@ -57,7 +59,7 @@ public sealed class ValkeyClusterSubscriber : IAsyncDisposable
 
     /// <summary>
     /// Opens one independent, binary-safe shard subscription. Duplicate names intentionally use
-    /// independent sockets. The initial attempt plus MaxRedirects topology-refresh retries are bounded.
+    /// independent sockets. The initial attempt plus MaxRedirects combined MOVED/ASK retries are bounded.
     /// </summary>
     public Task<ValkeyShardedSubscription> SubscribeAsync(
         ValkeyArgument channel,
@@ -82,11 +84,13 @@ public sealed class ValkeyClusterSubscriber : IAsyncDisposable
             }
         }
         var name = channel.Bytes.ToArray();
+        var node = _cluster.GetSubscriptionNodeOptions(name);
+        var asking = false;
         for (var attempt = 0; ; attempt++)
         {
             try
             {
-                return await OpenSubscriptionAsync(name, token).ConfigureAwait(false);
+                return await OpenSubscriptionAsync(name, node, asking, token).ConfigureAwait(false);
             }
             catch (ValkeyServerException error) when (error.ErrorCode == "MOVED")
             {
@@ -96,21 +100,34 @@ public sealed class ValkeyClusterSubscriber : IAsyncDisposable
                 }
                 // Never follow endpoint text from a subscriber error. Reload validated discovery data.
                 await _cluster.RefreshTopologyAsync(token).ConfigureAwait(false);
+                node = _cluster.GetSubscriptionNodeOptions(name);
+                asking = false;
+            }
+            catch (ShardSubscriptionRedirectException redirect)
+            {
+                if (attempt >= _options.Cluster.MaxRedirects)
+                {
+                    throw new ValkeyClusterException("Shard subscription redirect attempts were exhausted.");
+                }
+                node = _cluster.GetSubscriptionRedirectOptions(redirect, name, node);
+                asking = true;
             }
             catch (ValkeyServerException error) when (error.ErrorCode == "ASK")
             {
-                throw new ValkeyClusterException(
-                    "Shard subscription ASK migration is not supported; retry after slot migration completes."
-                );
+                throw new ValkeyClusterException("Malformed shard subscription ASK redirect.");
             }
         }
     }
 
-    private async Task<ValkeyShardedSubscription> OpenSubscriptionAsync(byte[] name, CancellationToken token)
+    private async Task<ValkeyShardedSubscription> OpenSubscriptionAsync(
+        byte[] name,
+        ValkeyClientOptions node,
+        bool asking,
+        CancellationToken token
+    )
     {
-        var node = _cluster.GetSubscriptionNodeOptions(name);
         var subscriber = await ValkeySubscriber
-            .ConnectAsync(_options.CreateSubscriberOptions(node), token)
+            .ConnectClusterAsync(_options.CreateSubscriberOptions(node), asking, token)
             .ConfigureAwait(false);
         var transferred = false;
         try

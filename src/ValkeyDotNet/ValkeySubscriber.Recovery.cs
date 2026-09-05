@@ -78,7 +78,7 @@ public sealed partial class ValkeySubscriber
                 try
                 {
                     var replacement = await Connection
-                        .OpenAsync(_options.Connection, deadline.Token)
+                        .OpenAsync(_options.Connection, deadline.Token, _asking)
                         .ConfigureAwait(false);
                     try
                     {

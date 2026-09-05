@@ -13,9 +13,12 @@
 
 ### Added
 
+- Bounded initial sharded subscription ASK handling with slot/endpoint validation, same-socket
+  ASKING before SSUBSCRIBE, seed TLS/ACL preservation, and unchanged slot ownership. Same-endpoint
+  recovery repeats ASKING; established-handle relocation and live ASK migration evidence remain pending.
 - RESP2/RESP3 sharded subscriber mode and a bounded cluster subscriber with dedicated slot-routed
   streams, endpoint mapping, initial MOVED-triggered topology refresh, and explicit topology-loss
-  failures. Automatic slot-migration relocation and ASK subscription handling remain unsupported.
+  failures. Automatic slot-migration relocation remains unsupported.
 - Sharded lifecycle regressions and gated three-primary live SPUBLISH/SSUBSCRIBE integration cases.
 - Standalone RESP3 tracking client with binary invalidations, NOLOOP, BCAST/PREFIX, tracking
   re-enablement on replacement, and bounded async delivery with invalidate-all on overflow or loss.

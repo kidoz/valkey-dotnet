@@ -28,7 +28,11 @@ public sealed partial class ValkeySubscriber
         internal RespReader Reader { get; }
         internal ValkeyProtocol Protocol { get; private set; }
 
-        internal static async Task<Connection> OpenAsync(ValkeyClientOptions options, CancellationToken token)
+        internal static async Task<Connection> OpenAsync(
+            ValkeyClientOptions options,
+            CancellationToken token,
+            bool asking = false
+        )
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
             timeout.CancelAfter(options.ConnectTimeout);
@@ -52,6 +56,16 @@ public sealed partial class ValkeySubscriber
                 }
                 var connection = new Connection(tcp, stream, options);
                 await connection.InitializeAsync(options, timeout.Token).ConfigureAwait(false);
+                if (asking)
+                {
+                    var reply = await connection
+                        .HandshakeCommandAsync(new ValkeyCommand("ASKING"), timeout.Token)
+                        .ConfigureAwait(false);
+                    if (reply.Type != RespType.SimpleString || !reply.AsBytes().Span.SequenceEqual("OK"u8))
+                    {
+                        throw new ValkeyProtocolException("Unexpected ASKING acknowledgement.");
+                    }
+                }
                 return connection;
             }
             catch (OperationCanceledException) when (!token.IsCancellationRequested)
