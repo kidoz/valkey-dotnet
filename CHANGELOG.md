@@ -4,9 +4,13 @@
 
 ### Added
 
+- Opt-in subscriber recovery with bounded equal-jitter backoff, a total recovery deadline, restored
+  channel/pattern streams, local unsubscribe during restoration, and loss/attempt/success counters.
+- Subscriber recovery regressions covering ambiguous changes, restoration races, repeated losses,
+  TLS/session settings, parsing bounds, and disposal; an explicitly gated live connection-kill test.
 - Dedicated RESP2/RESP3 subscriber with binary channel/pattern streams, independent local handles,
   bounded drop-incoming queues and drop counters, bounded acknowledgement lifecycle, and terminal
-  cancellation/disposal semantics. Reconnect, tracking, and sharded subscriptions remain unsupported.
+  cancellation/disposal semantics. Tracking and sharded subscriptions remain unsupported.
 - Bounded RESP2/RESP3 concurrent connection-loss regressions and recovery from a non-listening
   loopback endpoint without replaying an unsent write.
 - Opt-in, ownership-validated Docker stop/start runner with configurable cycles, resource samples,

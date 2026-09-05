@@ -1,6 +1,6 @@
 namespace ValkeyDotNet;
 
-/// <summary>Bounds and connection settings for a dedicated, terminal Pub/Sub connection.</summary>
+/// <summary>Bounds, optional recovery, and connection settings for a dedicated Pub/Sub connection.</summary>
 public sealed class ValkeySubscriberOptions
 {
     public ValkeyClientOptions Connection { get; init; } = new();
@@ -16,6 +16,16 @@ public sealed class ValkeySubscriberOptions
 
     /// <summary>Bounds admission, writes, and acknowledgement. Expiry after writing terminates the subscriber.</summary>
     public TimeSpan OperationTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>Restore confirmed subscriptions after transport loss. Disabled by default.</summary>
+    public bool EnableReconnect { get; init; }
+
+    public int MaxReconnectAttempts { get; init; } = 3;
+    public TimeSpan InitialReconnectDelay { get; init; } = TimeSpan.FromMilliseconds(100);
+    public TimeSpan MaxReconnectDelay { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>Total budget per recovery cycle, including backoff, connect, and all restoration acknowledgements.</summary>
+    public TimeSpan RecoveryTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     internal void Validate()
     {
@@ -44,6 +54,22 @@ public sealed class ValkeySubscriberOptions
         if (OperationTimeout <= TimeSpan.Zero || OperationTimeout.TotalMilliseconds > uint.MaxValue - 1)
         {
             throw new ArgumentOutOfRangeException(nameof(OperationTimeout));
+        }
+        if (MaxReconnectAttempts is < 1 or > 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MaxReconnectAttempts));
+        }
+        if (InitialReconnectDelay <= TimeSpan.Zero || InitialReconnectDelay > MaxReconnectDelay)
+        {
+            throw new ArgumentOutOfRangeException(nameof(InitialReconnectDelay));
+        }
+        if (MaxReconnectDelay.TotalMilliseconds > uint.MaxValue - 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MaxReconnectDelay));
+        }
+        if (RecoveryTimeout <= TimeSpan.Zero || RecoveryTimeout.TotalMilliseconds > uint.MaxValue - 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(RecoveryTimeout));
         }
     }
 }

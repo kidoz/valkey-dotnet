@@ -10,6 +10,104 @@ public sealed class ValkeyClientIntegrationTests
     [Theory]
     [InlineData(ValkeyProtocol.Resp2)]
     [InlineData(ValkeyProtocol.Resp3)]
+    public async Task SubscriberRestoresStreamsAfterItsOwnLiveConnectionIsKilled(ValkeyProtocol protocol)
+    {
+        if (Environment.GetEnvironmentVariable("VALKEYDOTNET_RUN_SUBSCRIBER_RECOVERY_TESTS") != "1")
+        {
+            Assert.Skip("Opt in to subscriber connection-kill tests only against an isolated disposable endpoint.");
+        }
+        var endpoint = GetEndpoint();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        var token = deadline.Token;
+        var name = "subscriber-recovery-" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
+        await using var publisher = await ValkeyClient.ConnectAsync(
+            new ValkeyClientOptions { Host = endpoint.Host, Port = endpoint.Port },
+            token
+        );
+        await using var subscriber = await ValkeySubscriber.ConnectAsync(
+            new ValkeySubscriberOptions
+            {
+                EnableReconnect = true,
+                InitialReconnectDelay = TimeSpan.FromMilliseconds(20),
+                RecoveryTimeout = TimeSpan.FromSeconds(5),
+                Connection = new ValkeyClientOptions
+                {
+                    Host = endpoint.Host,
+                    Port = endpoint.Port,
+                    Protocol = protocol,
+                    ClientName = name,
+                    Database = 1,
+                },
+            },
+            token
+        );
+        byte[] channel = [.. System.Text.Encoding.UTF8.GetBytes(name), 0, 255, 13, 10];
+        byte[] pattern = [.. System.Text.Encoding.UTF8.GetBytes(name), (byte)'*'];
+        await using var direct = await subscriber.SubscribeAsync(channel, token);
+        await using var matched = await subscriber.SubscribePatternAsync(pattern, token);
+        await using var directMessages = direct.ReadAllAsync(token).GetAsyncEnumerator(token);
+        await using var patternMessages = matched.ReadAllAsync(token).GetAsyncEnumerator(token);
+        long? previousId = null;
+        for (var cycle = 0; cycle <= 3; cycle++)
+        {
+            byte[] payload = [(byte)cycle, 0, 255, 13, 10];
+            Assert.Equal(
+                2,
+                (await publisher.ExecuteAsync(new ValkeyCommand("PUBLISH", channel, payload), token)).AsInt64()
+            );
+            Assert.True(await directMessages.MoveNextAsync());
+            Assert.True(await patternMessages.MoveNextAsync());
+            Assert.Equal(payload, directMessages.Current.Payload.ToArray());
+            Assert.Equal(payload, patternMessages.Current.Payload.ToArray());
+            Assert.Equal(pattern, patternMessages.Current.Pattern!.Value.ToArray());
+            var clients = (await publisher.ExecuteAsync(new ValkeyCommand("CLIENT", "LIST"), token)).AsString()!;
+            var owned = Assert.Single(
+                clients.Split('\n', StringSplitOptions.RemoveEmptyEntries),
+                line => line.Split(' ').Contains("name=" + name, StringComparer.Ordinal)
+            );
+            var fields = owned.Split(' ');
+            Assert.Contains("db=1", fields);
+            Assert.Contains("resp=" + ((int)protocol).ToString(CultureInfo.InvariantCulture), fields);
+            Assert.Contains("sub=1", fields);
+            Assert.Contains("psub=1", fields);
+            var id = long.Parse(
+                fields.Single(field => field.StartsWith("id=", StringComparison.Ordinal))[3..],
+                CultureInfo.InvariantCulture
+            );
+            Assert.True(id > 0);
+            Assert.NotEqual(previousId, id);
+            previousId = id;
+            if (cycle == 3)
+            {
+                break;
+            }
+            // Exact ID from the sole nonce-named test subscriber, never TYPE pubsub or a global kill.
+            Assert.Equal(
+                1,
+                (await publisher.ExecuteAsync(new ValkeyCommand("CLIENT", "KILL", "ID", id), token)).AsInt64()
+            );
+            while (subscriber.SuccessfulReconnects != cycle + 1)
+            {
+                Assert.Null(subscriber.Failure);
+                await Task.Delay(10, token);
+            }
+        }
+        Assert.Equal(3, subscriber.ConnectionLosses);
+        Assert.Equal(3, subscriber.ReconnectAttempts);
+        Assert.Equal(0, subscriber.DroppedMessages);
+        Assert.Equal("PONG", await publisher.PingAsync(token));
+        await direct.UnsubscribeAsync(token);
+        await matched.UnsubscribeAsync(token);
+        Assert.Equal(
+            0,
+            (await publisher.ExecuteAsync(new ValkeyCommand("PUBLISH", channel, "after"), token)).AsInt64()
+        );
+    }
+
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
     public async Task DedicatedSubscribersDeliverBinaryChannelsPatternsAndIndependentHandles(ValkeyProtocol protocol)
     {
         var endpoint = GetEndpoint();

@@ -40,12 +40,12 @@ Implemented:
 - Configurable bounded connections per cluster node for head-of-line isolation
 
 Deliberately not implemented: replica reads, cluster-wide scans, Sentinel discovery, general-purpose
-pooling, automatic subscription restoration, and sharded Pub/Sub. See
+pooling, tracking lifecycle, and sharded Pub/Sub. See
 [the connection model](docs/explanation/connection-model.md) for why, and
 [why managed-only](docs/explanation/why-managed-only.md) for the positioning.
 
 The unreleased development version also includes a [dedicated Pub/Sub subscriber](docs/reference/subscriber.md)
-with bounded binary message streams, structured scripting, isolated deadlines, and a
+with bounded binary message streams and opt-in subscription restoration, structured scripting, isolated deadlines, and a
 [standalone connection owner](docs/reference/connection-owner.md) with bounded recovery and explicit
 retry authorization. These additions are not in the published 1.0.0 package.
 

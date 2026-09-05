@@ -134,9 +134,9 @@ knobs; raising them by default weakens the process against a hostile peer.
 ## What this design defers
 
 Replica reads, cluster-wide scans, Sentinel discovery, and general-purpose pooling remain absent.
-The dedicated subscriber currently treats disconnect as terminal. Automatic subscription restoration,
-tracking invalidations, and topology-aware sharded Pub/Sub need additional state machines and recovery
-evidence before they become part of that API.
+The dedicated subscriber treats disconnect as terminal by default, with opt-in bounded restoration
+of confirmed channel/pattern subscriptions. Tracking invalidations and topology-aware sharded Pub/Sub
+still need additional state machines and recovery evidence before they become part of that API.
 
 The generic command API means none of that blocks day-to-day use. Scripting via `EVAL` covers the
 atomicity cases that would otherwise need a held connection.

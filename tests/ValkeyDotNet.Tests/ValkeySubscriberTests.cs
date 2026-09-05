@@ -7,7 +7,7 @@ using ValkeyDotNet.Tests.TestInfrastructure;
 
 namespace ValkeyDotNet.Tests;
 
-public sealed class ValkeySubscriberTests
+public sealed partial class ValkeySubscriberTests
 {
     private static CancellationToken TestToken => TestContext.Current.CancellationToken;
 

@@ -1,15 +1,14 @@
 using System.Diagnostics;
-using System.Net.Security;
 using System.Net.Sockets;
 using ValkeyDotNet.Protocol;
 
 namespace ValkeyDotNet;
 
 /// <summary>
-/// A dedicated RESP2/RESP3 channel and pattern subscriber. Connection loss is terminal; this version
-/// does not reconnect, restore subscriptions, track keys, or route sharded subscriptions.
+/// A dedicated RESP2/RESP3 channel and pattern subscriber with optional bounded restoration.
+/// Tracking and sharded subscriptions are not supported.
 /// </summary>
-public sealed class ValkeySubscriber : IAsyncDisposable
+public sealed partial class ValkeySubscriber : IAsyncDisposable
 {
     private sealed class Registration(byte[] name, bool pattern)
     {
@@ -18,57 +17,65 @@ public sealed class ValkeySubscriber : IAsyncDisposable
         internal List<ValkeySubscription> Handles { get; } = [];
     }
 
-    private sealed class Pending(string kind, byte[] name, Action confirm)
+    private sealed class Pending(string kind, Registration registration, Action confirm)
     {
         internal string Kind { get; } = kind;
-        internal byte[] Name { get; } = name;
+        internal byte[] Name => Registration.Name;
+        internal Registration Registration { get; } = registration;
         internal Action Confirm { get; } = confirm;
         internal TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private readonly ValkeySubscriberOptions _options;
-    private readonly TcpClient _tcp;
-    private readonly Stream _stream;
-    private readonly RespReader _reader;
+    private Connection _connection;
     private readonly object _sync = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Dictionary<string, Registration> _registrations = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Registration> _confirmed = new(StringComparer.Ordinal);
     private Task _readLoop = Task.CompletedTask;
     private Pending? _pending;
     private Exception? _failure;
     private bool _closed;
+    private bool _recovering;
+    private bool _connectionLossObserved;
+    private Exception? _lastConnectionFailure;
+    private long _connectionLosses;
+    private long _reconnectAttempts;
+    private long _successfulReconnects;
     private int _handles;
     private int _operations;
     private long _dropped;
 
-    private ValkeySubscriber(ValkeySubscriberOptions options, TcpClient tcp, Stream stream)
+    private ValkeySubscriber(ValkeySubscriberOptions options, Connection connection)
     {
         _options = options;
-        _tcp = tcp;
-        _stream = stream;
-        var connection = options.Connection;
-        _reader = new RespReader(
-            stream,
-            connection.MaxResponseBytes,
-            connection.MaxResponseElements,
-            connection.MaxNestingDepth
-        );
+        _connection = connection;
     }
 
-    public ValkeyProtocol NegotiatedProtocol { get; private set; }
+    public ValkeyProtocol NegotiatedProtocol
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _connection.Protocol;
+            }
+        }
+    }
+
     public bool IsConnected
     {
         get
         {
             lock (_sync)
             {
-                return !_closed;
+                return !_closed && !_recovering;
             }
         }
     }
 
-    /// <summary>The terminal failure, or null after normal disposal. No automatic reconnect occurs.</summary>
+    /// <summary>The terminal failure, or null before terminal failure or after normal disposal.</summary>
     public Exception? Failure
     {
         get
@@ -80,11 +87,27 @@ public sealed class ValkeySubscriber : IAsyncDisposable
         }
     }
 
-    /// <summary>Completes normally when the socket reader stops; inspect Failure for the terminal cause.</summary>
+    /// <summary>Completes normally after the reader and any recovery stop; inspect Failure for the terminal cause.</summary>
     public Task Completion => _readLoop;
 
     /// <summary>Total dropped local deliveries across all handles, including disposed handles.</summary>
     public long DroppedMessages => Interlocked.Read(ref _dropped);
+
+    public bool IsReconnecting
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return !_closed && _recovering;
+            }
+        }
+    }
+
+    /// <summary>Observed transport-loss intervals. Messages missed in these intervals cannot be counted or replayed.</summary>
+    public long ConnectionLosses => Interlocked.Read(ref _connectionLosses);
+    public long ReconnectAttempts => Interlocked.Read(ref _reconnectAttempts);
+    public long SuccessfulReconnects => Interlocked.Read(ref _successfulReconnects);
 
     public static async Task<ValkeySubscriber> ConnectAsync(
         ValkeySubscriberOptions? options = null,
@@ -93,95 +116,10 @@ public sealed class ValkeySubscriber : IAsyncDisposable
     {
         options ??= new();
         options.Validate();
-        var connection = options.Connection;
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(connection.ConnectTimeout);
-        var tcp = new TcpClient { NoDelay = true };
-        Stream? stream = null;
-        try
-        {
-            await tcp.ConnectAsync(connection.Host, connection.Port, timeout.Token).ConfigureAwait(false);
-            stream = tcp.GetStream();
-            if (connection.UseTls)
-            {
-                var ssl = connection.CertificateValidationCallback is null
-                    ? new SslStream(stream, false)
-                    : new SslStream(stream, false, connection.CertificateValidationCallback);
-                stream = ssl;
-                await ssl.AuthenticateAsClientAsync(
-                        new SslClientAuthenticationOptions { TargetHost = connection.Host },
-                        timeout.Token
-                    )
-                    .ConfigureAwait(false);
-            }
-            var subscriber = new ValkeySubscriber(options, tcp, stream);
-            await subscriber.InitializeAsync(timeout.Token).ConfigureAwait(false);
-            subscriber._readLoop = subscriber.ReadAsync();
-            return subscriber;
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            if (stream is not null)
-            {
-                await stream.DisposeAsync().ConfigureAwait(false);
-            }
-
-            tcp.Dispose();
-            throw new TimeoutException("The subscriber connection timed out.");
-        }
-        catch
-        {
-            if (stream is not null)
-            {
-                await stream.DisposeAsync().ConfigureAwait(false);
-            }
-
-            tcp.Dispose();
-            throw;
-        }
-    }
-
-    private async Task InitializeAsync(CancellationToken token)
-    {
-        var connection = _options.Connection;
-        var arguments = new List<ValkeyArgument> { (int)connection.Protocol };
-        if (connection.Password is not null)
-        {
-            arguments.Add("AUTH");
-            arguments.Add(connection.Username ?? "default");
-            arguments.Add(connection.Password);
-        }
-        if (connection.ClientName is not null)
-        {
-            arguments.Add("SETNAME");
-            arguments.Add(connection.ClientName);
-        }
-        var hello = await HandshakeCommandAsync(new ValkeyCommand("HELLO", arguments.ToArray()), token)
-            .ConfigureAwait(false);
-        if (hello.Type is not (RespType.Map or RespType.Array))
-        {
-            throw new ValkeyProtocolException("Unexpected subscriber handshake frame.");
-        }
-
-        NegotiatedProtocol = ValkeyClient.ReadNegotiatedProtocol(hello);
-        if (connection.Database != 0)
-        {
-            var select = await HandshakeCommandAsync(new ValkeyCommand("SELECT", connection.Database), token)
-                .ConfigureAwait(false);
-            if (select.Type != RespType.SimpleString || !select.AsBytes().Span.SequenceEqual("OK"u8))
-            {
-                throw new ValkeyProtocolException("Unexpected subscriber database acknowledgement.");
-            }
-        }
-    }
-
-    private async Task<RespValue> HandshakeCommandAsync(ValkeyCommand command, CancellationToken token)
-    {
-        await _stream.WriteAsync(RespWriter.Encode(command), token).ConfigureAwait(false);
-        await _stream.FlushAsync(token).ConfigureAwait(false);
-        var reply = await _reader.ReadAsync(token).ConfigureAwait(false);
-        ThrowServerError(reply);
-        return reply;
+        var connection = await Connection.OpenAsync(options.Connection, cancellationToken).ConfigureAwait(false);
+        var subscriber = new ValkeySubscriber(options, connection);
+        subscriber._readLoop = subscriber.ReadAsync();
+        return subscriber;
     }
 
     public Task<ValkeySubscription> SubscribeAsync(
@@ -205,6 +143,12 @@ public sealed class ValkeySubscriber : IAsyncDisposable
             throw new ArgumentOutOfRangeException(nameof(name));
         }
 
+        lock (_sync)
+        {
+            ThrowIfClosed();
+            ThrowIfRecovering();
+        }
+
         var started = await EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -216,6 +160,7 @@ public sealed class ValkeySubscriber : IAsyncDisposable
             lock (_sync)
             {
                 ThrowIfClosed();
+                ThrowIfRecovering();
                 Remaining(started, cancellationToken);
                 if (_handles >= _options.MaxSubscriptions)
                 {
@@ -260,6 +205,12 @@ public sealed class ValkeySubscriber : IAsyncDisposable
             {
                 return;
             }
+            if (_recovering)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Remove(handle, _registrations[handle.Key]);
+                return;
+            }
         }
 
         long started;
@@ -292,7 +243,7 @@ public sealed class ValkeySubscriber : IAsyncDisposable
                 ThrowIfClosed();
                 Remaining(started, cancellationToken);
                 registration = _registrations[handle.Key];
-                if (registration.Handles.Count > 1)
+                if (_recovering || registration.Handles.Count > 1)
                 {
                     Remove(handle, registration);
                     return;
@@ -395,19 +346,22 @@ public sealed class ValkeySubscriber : IAsyncDisposable
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
         timeout.CancelAfter(Remaining(started, cancellationToken));
-        var pending = new Pending(kind, registration.Name, confirm);
+        var pending = new Pending(kind, registration, confirm);
+        Connection connection;
         lock (_sync)
         {
             ThrowIfClosed();
+            ThrowIfRecovering();
             cancellationToken.ThrowIfCancellationRequested();
+            connection = _connection;
             _pending = pending;
         }
         try
         {
-            await _stream
-                .WriteAsync(RespWriter.Encode(new ValkeyCommand(kind, registration.Name)), timeout.Token)
+            await connection
+                .Stream.WriteAsync(RespWriter.Encode(new ValkeyCommand(kind, registration.Name)), timeout.Token)
                 .ConfigureAwait(false);
-            await _stream.FlushAsync(timeout.Token).ConfigureAwait(false);
+            await connection.Stream.FlushAsync(timeout.Token).ConfigureAwait(false);
             await pending.Completion.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -432,7 +386,10 @@ public sealed class ValkeySubscriber : IAsyncDisposable
         catch (Exception error) when (error is IOException or SocketException)
         {
             var failure = new ValkeyConnectionException("The subscriber transport failed.", error);
-            Close(failure);
+            if (!Disconnect(connection, failure))
+            {
+                Close(failure);
+            }
             throw failure;
         }
         finally
@@ -444,48 +401,72 @@ public sealed class ValkeySubscriber : IAsyncDisposable
 
     private async Task ReadAsync()
     {
-        try
+        while (true)
         {
-            while (true)
+            var connection = _connection;
+            try
             {
-                var frame = await _reader.ReadAsync(_shutdown.Token).ConfigureAwait(false);
-                lock (_sync)
+                while (true)
                 {
-                    if (_closed)
-                    {
-                        return;
-                    }
-
-                    if (frame.Type is RespType.SimpleError or RespType.BlobError)
-                    {
-                        if (_pending is null)
-                        {
-                            throw new ValkeyProtocolException("Unsolicited subscriber error.");
-                        }
-
-                        var rejected = _pending;
-                        _pending = null;
-                        try
-                        {
-                            ThrowServerError(frame);
-                        }
-                        catch (ValkeyServerException error)
-                        {
-                            rejected.Completion.TrySetException(error);
-                        }
-                        continue;
-                    }
-                    ProcessFrame(frame);
+                    var frame = await connection.Reader.ReadAsync(_shutdown.Token).ConfigureAwait(false);
+                    ProcessResponse(frame);
                 }
             }
-        }
-        catch (Exception error)
-        {
-            Close(
-                error is IOException or SocketException
+            catch (Exception error)
+            {
+                var failure = error is IOException or SocketException
                     ? new ValkeyConnectionException("The subscriber transport failed.", error)
-                    : error
-            );
+                    : error;
+                if (
+                    (error is IOException or SocketException || error is ObjectDisposedException && IsReconnecting)
+                    && Disconnect(connection, failure)
+                )
+                {
+                    if (await RecoverAsync().ConfigureAwait(false))
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    Close(failure);
+                }
+                return;
+            }
+        }
+    }
+
+    private void ProcessResponse(RespValue frame, bool restoring = false)
+    {
+        lock (_sync)
+        {
+            if (_closed)
+            {
+                return;
+            }
+            if (_recovering && !restoring)
+            {
+                throw new IOException("The subscriber connection was retired.");
+            }
+            if (frame.Type is RespType.SimpleError or RespType.BlobError)
+            {
+                if (_pending is null)
+                {
+                    throw new ValkeyProtocolException("Unsolicited subscriber error.");
+                }
+                var rejected = _pending;
+                _pending = null;
+                try
+                {
+                    ThrowServerError(frame);
+                }
+                catch (ValkeyServerException error)
+                {
+                    rejected.Completion.TrySetException(error);
+                }
+                return;
+            }
+            ProcessFrame(frame);
         }
     }
 
@@ -525,13 +506,23 @@ public sealed class ValkeySubscriber : IAsyncDisposable
                 throw new ValkeyProtocolException("Mismatched subscription acknowledgement.");
             }
 
-            var expectedCount = _registrations.Count + (kind is "subscribe" or "psubscribe" ? 1 : -1);
+            var subscribing = kind is "subscribe" or "psubscribe";
+            var expectedCount = _confirmed.Count + (subscribing ? 1 : -1);
             if (items[2].AsInt64() != expectedCount)
             {
                 throw new ValkeyProtocolException("Mismatched subscription count.");
             }
 
             pending.Confirm();
+            var key = Key(pending.Name, pending.Registration.Pattern);
+            if (subscribing)
+            {
+                _confirmed.Add(key, pending.Registration);
+            }
+            else
+            {
+                _confirmed.Remove(key);
+            }
             _pending = null;
             pending.Completion.TrySetResult();
             return;
@@ -549,7 +540,7 @@ public sealed class ValkeySubscriber : IAsyncDisposable
         var name = items[1].AsBytes();
         if (
             name.Length > _options.MaxChannelBytes
-            || !_registrations.TryGetValue(Key(name.Span, pattern), out var registration)
+            || !_confirmed.TryGetValue(Key(name.Span, pattern), out var registration)
         )
         {
             throw new ValkeyProtocolException("Delivery has no confirmed subscription.");
@@ -618,11 +609,11 @@ public sealed class ValkeySubscriber : IAsyncDisposable
             }
 
             _registrations.Clear();
+            _confirmed.Clear();
             _handles = 0;
         }
         _shutdown.Cancel();
-        _stream.Dispose();
-        _tcp.Dispose();
+        _connection.Dispose();
     }
 
     public async ValueTask DisposeAsync()
