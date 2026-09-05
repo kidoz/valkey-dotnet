@@ -183,3 +183,48 @@ resources were retained. The manual **ASK migration** workflow was added but not
 Nonempty-key MIGRATE, atomic migration, cross-version ASK behavior, live TLS, partitions, lock safety,
 and long-duration soak remain unverified. These elapsed totals are test durations, not latency
 benchmarks. The [run guide](../how-to/run-ask-migration-tests.md) specifies safety and cleanup limits.
+
+## Nonempty-key migration — 2026-09-05
+
+`just test-key-transfer` passed two Release cases on Valkey 9.1.2, RESP2 and RESP3, in 34.454 seconds
+with no failures or skips. Each fresh three-primary cluster transferred two binary string keys
+using two single-key MIGRATE calls: a 4 KiB byte-pattern value with a 120-second TTL, followed by a
+small persistent value. Host/runtime were macOS arm64, SDK 10.0.400 and .NET 10.0.11, without TLS;
+each Docker node was capped at 128 MiB and one CPU.
+
+Both cases verified exact binary placement with node-local GETKEYSINSLOT, source removal, successful
+ASK-routed reads of the transferred key, and TRYAGAIN for MGET spanning the transferred and retained
+keys. The command connection remained usable after that server error. Values and expiration
+metadata matched before transfer, between transfers, before cutover, and after cutover. Persistent
+keys retained PTTL=-1; expiring keys retained positive TTL. Absolute expiration shifted by **+1 ms**
+in both cases, within the explicit ±1 second tolerance for relative-TTL transfer/local clock skew.
+This is metadata preservation evidence, not an observed expiry event or precise lock-lease proof.
+
+Sharded delivery stayed on the source even after both data keys moved. Destination-first cutover
+then produced one loss, one attempt, one successful recovery/relocation, and zero queue drops per
+original handle. The same handle, enumerator, and completion task survived; one destination
+registration replaced the source registration and the unrelated channel retained its connection.
+
+The transfer helper accepts only fixture-namespaced binary keys of at most 512 bytes, derives the
+destination from owned node indices, rechecks Docker identity/membership and migration markers,
+and enforces a two-key total budget. It uses no COPY/REPLACE and never retries transfer failures.
+MIGRATE has a two-second server idle timeout; client connect/recheck/transfer has a ten-second
+deadline within the five-minute case budget. An I/O error can leave a copy at both nodes, so no
+failure-reconciliation or atomic-slot-migration claim follows. See the
+[MIGRATE contract](https://valkey.io/commands/migrate/).
+
+All four known keys were deleted after verification. Every node had zero keys, shard channels, and
+named application connections before ownership-checked cleanup removed six containers and two
+networks. The record is `artifacts/resilience/key-transfer.trx`. All 442 unit tests passed in Debug
+and Release, builds/formatting were clean, 20 harness checks passed, and both live cases skipped
+without opt-in. No shipping code, dependency, parsing limit, or retry policy changed. The manual
+**Nonempty key migration** workflow was added but not dispatched.
+
+The shared-fixture regression passed both ASK cases and both three-cycle empty-slot cases in
+66.056 seconds (`artifacts/resilience/migration-after-key-transfer.trx`), with twelve additional
+containers and four networks cleaned up. Existing application resources were retained.
+
+This is healthy single-key MIGRATE coverage for two strings per case. Bulk KEYS mode, other data
+types, BUSYKEY/IOERR reconciliation, atomic migration, live TLS, cross-version faults, lock safety,
+and prolonged soak remain separate evidence requirements. The
+[run guide](../how-to/run-key-transfer-tests.md) defines the exact experiment and cleanup limits.

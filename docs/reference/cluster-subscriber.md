@@ -142,6 +142,13 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [nonempty-key migration runner](../how-to/run-key-transfer-tests.md) passed RESP2/RESP3 on
+Valkey 9.1.2 on 2026-09-05. Two binary keys per case moved with MIGRATE while sharded delivery
+remained on the source; cutover preserved the same stream and produced one relocation with zero
+drops. Binary values, expiration metadata, partial-migration ASK/TRYAGAIN, server registrations,
+and cleanup passed. This is healthy single-key legacy migration, not atomic migration or transfer
+failure recovery. See the [execution record](resilience-evidence.md#nonempty-key-migration--2026-09-05).
+
 On 2026-09-05, the native ASK-migration cases passed RESP2/RESP3 on Valkey 9.1.2: repeated key-command
 ASK/ASKING, binary values, unchanged routing during migration, source-local existing/new shard
 registrations, and same-stream relocation after cutover. This supplies native migration behavior
@@ -209,5 +216,5 @@ This live success is separate from overall unit-suite readiness: immediate-close
 and rejection regressions failed intermittently during that verification session. A subsequent
 shutdown-isolation change passed the expanded unit suite and repeated runs. See
 [subscriber verification evidence](subscriber.md#verification-evidence).
-Nonempty/atomic slot migration, TLS recovery, prolonged soak, and performance
+Atomic slot migration, transfer-failure reconciliation, TLS recovery, prolonged soak, and performance
 evidence remain separate work.
