@@ -83,3 +83,5 @@ and `dotnet --info` alongside local runs. Failed runs do not publish a completed
 The manual **Real-server round-trip benchmarks** workflow runs correctness gates first and uploads
 JSON/TRX plus CPU/SDK environment files. It has no performance threshold and is not dispatched
 automatically. See the [performance reference](../reference/performance-baseline.md) for recorded evidence.
+
+For object/stack attribution, use the separate [allocation profiling guide](profile-allocations.md).

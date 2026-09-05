@@ -20,6 +20,7 @@ Observability: [Collect owner telemetry](how-to/collect-telemetry.md) and
 [diagnostics reference](reference/diagnostics.md).
 
 Performance: [run bounded real-server cache/lock benchmarks](how-to/run-roundtrip-benchmarks.md).
+Allocation analysis: [profile GET and pipeline allocations](how-to/profile-allocations.md).
 
 Resilience: [Run isolated restart tests](how-to/run-resilience-tests.md) and
 [executed versus pending evidence](reference/resilience-evidence.md).

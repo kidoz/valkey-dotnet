@@ -4,6 +4,10 @@
     </PropertyGroup>
     <ItemGroup>
         <Compile
+            Include="../../benchmarks/ValkeyDotNet.Benchmarks/AllocationSampleSummary.cs"
+            Link="TestInfrastructure/AllocationSampleSummary.cs"
+        />
+        <Compile
             Include="../../benchmarks/ValkeyDotNet.Benchmarks/RoundTripWorkload.cs"
             Link="TestInfrastructure/RoundTripWorkload.cs"
         />

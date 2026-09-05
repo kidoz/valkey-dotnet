@@ -17,6 +17,9 @@
 
 ### Added
 
+- Focused GET/pipeline allocation workloads, offline EventPipe allocation-stack reports, and paired
+  codec controls that distinguish parser temporaries from the owned reply graph.
+
 - Bounded standalone cache/lock round-trip benchmark profile and manual workflow: RESP2/RESP3,
   one/eight callers, request latency percentiles, throughput, process-wide managed allocations,
   raw samples, owned-container cleanup, and separate live workload correctness tests.

@@ -241,6 +241,18 @@ test-roundtrip-workloads:
 bench-roundtrips:
     dotnet run -c Release --project {{ benchmarks }} -- --roundtrips
 
+# Isolate GET reply parsing allocation from the identical owned result graph; no server.
+bench-get-replies:
+    dotnet run -c Release --project {{ benchmarks }} -- --filter '*GetReplyBenchmarks*'
+
+# Bounded allocation-only workload; use external dotnet-trace for allocation stacks.
+allocation-workload operation:
+    dotnet run -c Release --project {{ benchmarks }} -- --allocation-workload '{{ operation }}'
+
+# Match a local EventPipe trace to its completed workload JSON report.
+allocation-report trace_path workload_path:
+    dotnet run -c Release --project {{ benchmarks }} -- --allocation-report '{{ trace_path }}' '{{ workload_path }}'
+
 # Format all C# and project files with CSharpier.
 format: tools
     dotnet csharpier format .
