@@ -3,6 +3,46 @@
 This page separates implemented experiments from executed evidence. It is not a cache/lock
 production-readiness certification.
 
+## MIGRATE BUSYKEY conflict — 2026-09-05
+
+`just test-busykey` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 28.171 seconds, with no
+failures or skips. Each case used a fresh owned three-primary cluster on local Docker, with
+128 MiB/one CPU per node and DEBUG disabled. The client ran Release on macOS arm64 with SDK
+10.0.400 and .NET 10.0.11; servers ran Linux aarch64 without TLS.
+
+The same binary key existed at both nodes before transfer, with distinct 4 KiB/five-byte values
+and 120/90-second initial TTLs. Exactly one single-key MIGRATE without REPLACE returned
+`ValkeyServerException`, outer `ErrorCode=ERR`, and `DeliveryStatus=ReplyReceived`; the nested
+destination error was BUSYKEY. This wrapping matches the
+[Valkey 9.1.2 implementation](https://github.com/valkey-io/valkey/blob/9.1.2/src/cluster.c#L593-L605).
+PING and binary ECHO then succeeded on that same physical connection. Source command statistics
+confirmed one MIGRATE call; there was no replay or overwrite.
+
+Independent node-local reads before and after rejection preserved both exact values and absolute
+expirations, with zero PEXPIRETIME shift and positive TTL on each copy. All slot maps retained the
+source owner. The same source-local and stationary sharded streams delivered binary sequences,
+with zero losses, reconnect attempts, relocations, or local drops. Source/target shard registration
+counts remained one/zero. Routed reads still returned only the source value, demonstrating why
+reconciliation cannot rely on a routed GET alone.
+
+The conflict was deliberately left unresolved until test teardown: no winner-selection policy,
+REPLACE, or slot cutover was performed. Teardown deleted only the two known fixture copies,
+drained/unsubscribed both streams, verified zero keys/channels/named clients, and removed all six
+owned containers/two networks. Those deletions discard disposable test data, not production conflicts.
+Evidence: `artifacts/resilience/busykey.trx`. The manual workflow was added but not dispatched;
+see [runner controls](../how-to/run-busykey-tests.md).
+
+This is received single-key conflict-rejection evidence, not server-to-server IOERR reconciliation,
+bulk-transfer partial success, concurrent writers, a production merge policy, live TLS, or broader
+version compatibility. No shipping library code or retry policy changed.
+
+All 442 unit tests and 96 harness checks passed Debug/Release, `just ci` passed, and the two new
+live cases skipped without opt-in. The existing successful-transfer regression also passed both
+protocols in 38.715 seconds, with +1 ms/0 ms expiration shifts, one relocation each, and zero drops
+(`artifacts/resilience/key-transfer-after-busykey.trx`). Across both live runs, twelve owned
+containers and four networks were removed. The before/after inventory retained all existing Docker
+containers/networks, and the three hostloom services remained healthy.
+
 ## Bounded resubscribe soak — 2026-09-05
 
 `just test-resubscribe-soak` passed both RESP2/RESP3 cases on Valkey 9.1.2 in 182.409 seconds,

@@ -142,6 +142,13 @@ connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
 
+The [MIGRATE BUSYKEY runner](../how-to/run-busykey-tests.md) passed RESP2/RESP3 on Valkey 9.1.2
+on 2026-09-05. A received destination conflict preserved both binary values/expirations, source
+ownership, and the same source-local and stationary streams with zero losses/attempts/relocations/
+drops. No overwrite, replay, or cutover occurred. This is conflict rejection, not IOERR or a
+production reconciliation policy. See the
+[execution record](resilience-evidence.md#migrate-busykey-conflict--2026-09-05).
+
 The [bounded resubscribe soak](../how-to/run-resubscribe-soak-tests.md) passed RESP2/RESP3 on
 Valkey 9.1.2 on 2026-09-05: four warm-up plus 30 measured relocations per protocol, unchanged
 streams, one reconnect attempt per relocation, zero local drops, exact settled server connection
