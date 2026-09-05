@@ -104,6 +104,14 @@ This is reactive recovery, not proactive topology polling or silent-partition de
 messages are not replayed or counted; this API provides no durable delivery, cache-state
 reconstruction, or exactly-once guarantee. Consumers must reconcile application state after loss.
 
+`CLUSTER SHARDS` discovery ignores primaries marked `fail` or `loading`, including a failed former
+primary still listed beside its promoted replica. Missing health remains accepted for compatibility;
+unknown health values are rejected. If only unavailable primaries are advertised, subscription
+recovery retries discovery within its configured endpoint/attempt/deadline limits. Initial discovery
+and ordinary explicit topology refresh fail instead of installing that unavailable map. This does
+not add automatic retries of command writes. Health semantics follow the
+[Valkey command contract](https://valkey.io/commands/cluster-shards/).
+
 ## Handle lifecycle
 
 `ReadAllAsync` exposes the bounded binary stream; multiple enumerators compete, and cancelling
@@ -125,6 +133,15 @@ the cluster subscriber cancels acquisition, closes every retained stream, and di
 connections. Duplicate channel handles on separate sockets remain independent.
 
 ## Verification scope
+
+The [isolated primary-failover runner](../how-to/run-primary-failover-tests.md) passed four cases on
+Valkey 9.1.2 on 2026-09-05: RESP2/RESP3 with a healthy seed and with the stopped primary as the only
+seed. Natural replica promotion, unchanged handles/streams, resumed binary delivery, one promoted
+registration, unrelated-channel isolation, zero queue drops, and cleanup all passed. The experiment
+exposed and fixed selection of a failed former primary ahead of its promoted replica. Seven new
+regressions and all 442 Debug/Release unit cases passed. These runs use an explicit recovery budget;
+they do not certify default budgets or sustained resource stability. See the
+[execution record](resilience-evidence.md#primary-failover-runner--2026-09-05).
 
 An opt-in [isolated slot-migration runner](../how-to/run-slot-migration-tests.md) now exercises
 real legacy empty-slot moves while retaining established handles. On 2026-09-05, both RESP2/RESP3
@@ -178,5 +195,5 @@ This live success is separate from overall unit-suite readiness: immediate-close
 and rejection regressions failed intermittently during that verification session. A subsequent
 shutdown-isolation change passed the expanded unit suite and repeated runs. See
 [subscriber verification evidence](subscriber.md#verification-evidence).
-Live failover, nonempty/atomic slot migration, forced ASK, TLS recovery, prolonged soak, and performance
+Nonempty/atomic slot migration, forced ASK, TLS recovery, prolonged soak, and performance
 evidence remain separate work.

@@ -25,7 +25,7 @@
 - Opt-in established sharded subscription topology recovery with the same handle and bounded queue,
   serialized temporary discovery, bounded known-primary fallback, restoration MOVED/ASK handling,
   and loss/attempt/relocation counters. Add deterministic lifecycle, TLS, and resource-bound coverage;
-  live slot-migration/failover verification remains pending.
+  live empty-slot migration and single-primary failover passed on Valkey 9.1.2.
 - Bounded initial sharded subscription ASK handling with slot/endpoint validation, same-socket
   ASKING before SSUBSCRIBE, seed TLS/ACL preservation, and unchanged slot ownership. Same-endpoint
   recovery repeats ASKING; live ASK migration evidence remains pending.

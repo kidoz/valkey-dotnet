@@ -34,9 +34,9 @@ Subscriber connection-loss restoration subsequently passed six live RESP2/RESP3 
 9.1.2, 8.1.10, and 7.2.14: three exact-ID connection kills per case, eighteen successful recoveries,
 and verified cleanup. See [subscriber verification evidence](subscriber.md#verification-evidence).
 
-DNS-resolution faults, abrupt primary failover, partitions, prolonged soak, and subscriber
+DNS-resolution faults, partitions, prolonged soak, and subscriber
 server-restart restoration still need dedicated evidence. No transport retry policy was changed
-to make these experiments pass.
+to make the preceding experiments pass. Sharded primary-failover evidence is recorded below.
 
 Standalone RESP3 tracking also passed its live matrix on 2026-09-05: twelve cases across Valkey
 9.1.2, 8.1.10, and 7.2.14, including nine exact-ID connection kills and successful on-demand tracking
@@ -86,6 +86,61 @@ Per-move elapsed samples include Docker/admin checks and are not recovery-latenc
 `just ci` and the Release unit suite also passed all 435 cases, and all ten harness-only checks
 passed in Release.
 This establishes a small live legacy empty-slot migration smoke test, not general release readiness.
-Atomic migration, nonempty-key transfer, forced ASK, primary failover, seed unavailability, TLS, and prolonged soak
-remain separate evidence requirements. The [run guide](../how-to/run-slot-migration-tests.md)
+Atomic migration, nonempty-key transfer, forced ASK, TLS, and prolonged soak
+remain separate evidence requirements. Primary failover and seed unavailability are covered below.
+The [run guide](../how-to/run-slot-migration-tests.md)
 describes ownership checks, opt-in controls, and cleanup limits.
+
+## Primary-failover runner — 2026-09-05
+
+`just test-failover` passed four Release cases on Valkey 9.1.2 with no failures or skips
+(110.420 seconds total). Each case used a fresh three-primary cluster and one ready replica,
+stopped only its verified primary with SIGKILL, and waited for natural promotion. The original
+primary stayed stopped through all assertions; two cases used that primary as their only seed.
+The host was macOS arm64, SDK 10.0.400 and .NET 10.0.11; Docker servers ran without TLS.
+
+| Protocol | Seed | Promotion observed (ms) | Recovery attempts | Final check elapsed (ms) |
+|---|---|---:|---:|---:|
+| RESP2 | Surviving primary | 8,499 | 6 | 8,760 |
+| RESP3 | Surviving primary | 8,553 | 7 | 9,687 |
+| RESP2 | Stopped primary | 8,831 | 7 | 9,853 |
+| RESP3 | Stopped primary | 7,457 | 6 | 7,936 |
+
+Elapsed samples include Docker identity checks, server-election observation, and assertions; they
+are not isolated recovery-latency measurements. Recovery used a 60-second deadline, 20 attempts,
+and 500 ms initial / 2 second maximum backoff, not the default attempt budget.
+
+Every case preserved the same handle, enumerator, and completion task; recorded one connection
+loss and one successful recovery/relocation; resumed binary delivery; verified exactly one shard
+registration on the promoted primary; and observed zero local queue drops. The unrelated channel
+retained its connection and delivered before and after the fault. The publisher explicitly refreshed
+through a surviving seed after promotion. No publications were attempted during the outage, and
+no failed writes were replayed.
+
+The initial four-case run failed. A diagnostic rerun showed a failed former primary still listed
+as `master` before the promoted `online` master in `CLUSTER SHARDS`. Discovery had selected the
+first master without inspecting health, exhausting reconnect attempts against the stopped endpoint.
+The fix skips `fail`/`loading` primaries and treats an unavailable-primary map as transient only
+for bounded subscription recovery. Unknown health remains terminal; initial discovery does not
+install unavailable maps. This follows the [server health contract](https://valkey.io/commands/cluster-shards/).
+Seven deterministic regressions and all 442 Debug/Release unit cases passed. Thirteen harness-only
+checks passed, and all four fault cases skipped without opt-in. No retry limits, parser bounds,
+TLS policy, or general command replay policy were relaxed. Maintainer review remains required
+before release.
+
+The passing TRX is `artifacts/resilience/failover.trx`; the pre-fix diagnostic failures and topology
+snapshots are retained in `artifacts/resilience/failover-diagnostic.trx`. All sixteen containers and
+four networks from the passing run were removed after ownership checks, with zero keys, shard
+channels, or named application connections on surviving nodes before teardown. Failed-run resources
+were also removed. Existing application containers and project networks were retained; images remain
+cached. The manual **Primary failover** workflow was added but not dispatched.
+
+The shared fixture also passed a post-fix migration regression: RESP2/RESP3, three moves each,
+six successful relocations, zero drops, and cleanup of six additional containers/two networks
+(29.023 seconds total). Its record is `artifacts/resilience/migration-after-failover.trx`.
+Final Docker inventory contained no test resources; both original application container IDs and
+all original application project-network IDs remained.
+
+This verifies a single primary crash per case, not forced ASK, nonempty/atomic migration, partitions,
+DNS failure, live TLS, other server versions, lock safety through failover, or prolonged resubscribe
+soak. The [run guide](../how-to/run-primary-failover-tests.md) defines opt-in and cleanup controls.
