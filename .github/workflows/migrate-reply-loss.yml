@@ -1,0 +1,37 @@
+name: MIGRATE reply loss
+
+# Manual only: discard one successful transfer reply in each fresh owned cluster.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reply-loss:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      VALKEYDOTNET_RUN_MIGRATE_REPLY_LOSS_TESTS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+      - name: Run isolated reply-loss tests
+        run: |
+          mkdir -p artifacts/resilience
+          dotnet run --project tests/ValkeyDotNet.IntegrationTests --configuration Release -- \
+            -method '*OwnedLostMigrateReplyIsReconciledWithoutReplay' \
+            -showLiveOutput -result-trx artifacts/resilience/migrate-reply-loss.trx
+      - name: Upload reconciliation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: migrate-reply-loss-results
+          path: artifacts/resilience/migrate-reply-loss.trx
+          if-no-files-found: warn

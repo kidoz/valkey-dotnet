@@ -40,6 +40,8 @@ Migration cancellation: [run isolated pre-transfer cancellation tests](how-to/ru
 
 Migration rollback: [run isolated post-snapshot link-failure tests](how-to/run-atomic-rollback-tests.md).
 
+Ambiguous transfer results: [run isolated MIGRATE reply-loss tests](how-to/run-migrate-reply-loss-tests.md).
+
 Client-side invalidations: [RESP3 tracking reference](reference/client-tracking.md).
 
 ## Writing docs here

@@ -17,6 +17,10 @@
 
 ### Added
 
+- Opt-in MIGRATE reply-loss runner and manual workflow: discard one confirmed success reply,
+  verify delivery ambiguity and physical-client invalidation, reconcile node-local placement without
+  replay, and retain data/expiration and same-stream sharded cutover in RESP2/RESP3.
+
 - Opt-in atomic migration rollback runner and manual workflow: close one verified export link after
   snapshot import, verify failed jobs and provisional-key cleanup, and preserve source data/sharded
   streams. Local-only migration debug is confined to the new owned rollback fixture.

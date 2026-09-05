@@ -55,6 +55,13 @@ test-migration $migration_cycles="3":
     -method '*OwnedSlotMigrationPreservesShardedHandleAndStream' \
     -showLiveOutput -result-trx artifacts/resilience/migration.trx
 
+# Lose one completed MIGRATE reply and reconcile node-local placement without replay.
+test-migrate-reply-loss:
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_MIGRATE_REPLY_LOSS_TESTS=1 dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedLostMigrateReplyIsReconciledWithoutReplay' \
+    -showLiveOutput -result-trx artifacts/resilience/migrate-reply-loss.trx
+
 # Break one owned export connection after snapshot import and verify rollback and source delivery.
 test-atomic-rollback:
     mkdir -p artifacts/resilience

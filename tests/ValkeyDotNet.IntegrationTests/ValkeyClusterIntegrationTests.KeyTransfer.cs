@@ -44,11 +44,20 @@ public sealed partial class ValkeyClusterIntegrationTests
         Atomic,
         CancelBeforeTransfer,
         DisconnectAfterSnapshot,
+        LostMigrateReply,
+    }
+
+    [Theory]
+    [InlineData(ValkeyProtocol.Resp2)]
+    [InlineData(ValkeyProtocol.Resp3)]
+    public async Task OwnedLostMigrateReplyIsReconciledWithoutReplay(ValkeyProtocol protocol)
+    {
+        await VerifyOwnedKeyMigrationAsync(protocol, OwnedMigrationMode.LostMigrateReply);
     }
 
     private static async Task VerifyOwnedKeyMigrationAsync(ValkeyProtocol protocol, OwnedMigrationMode mode)
     {
-        var atomic = mode != OwnedMigrationMode.Legacy;
+        var atomic = mode is not (OwnedMigrationMode.Legacy or OwnedMigrationMode.LostMigrateReply);
         var cancelBeforeTransfer = mode == OwnedMigrationMode.CancelBeforeTransfer;
         var disconnectAfterSnapshot = mode == OwnedMigrationMode.DisconnectAfterSnapshot;
         var retainsSource = cancelBeforeTransfer || disconnectAfterSnapshot;
@@ -57,6 +66,7 @@ public sealed partial class ValkeyClusterIntegrationTests
             OwnedMigrationMode.Legacy => "VALKEYDOTNET_RUN_KEY_TRANSFER_TESTS",
             OwnedMigrationMode.Atomic => "VALKEYDOTNET_RUN_ATOMIC_MIGRATION_TESTS",
             OwnedMigrationMode.CancelBeforeTransfer => "VALKEYDOTNET_RUN_ATOMIC_CANCELLATION_TESTS",
+            OwnedMigrationMode.LostMigrateReply => "VALKEYDOTNET_RUN_MIGRATE_REPLY_LOSS_TESTS",
             _ => "VALKEYDOTNET_RUN_ATOMIC_ROLLBACK_TESTS",
         };
         if (Environment.GetEnvironmentVariable(flag) != "1")
@@ -187,7 +197,14 @@ public sealed partial class ValkeyClusterIntegrationTests
         else
         {
             await cluster.BeginSlotMigrationAsync(slot, 0, 1, 2, token);
-            await cluster.MigrateOwnedKeyAsync(expiringKey, 0, 1, 2, protocol, token);
+            if (mode == OwnedMigrationMode.LostMigrateReply)
+            {
+                await cluster.MigrateOwnedKeyWithLostReplyAsync(expiringKey, protocol, token);
+            }
+            else
+            {
+                await cluster.MigrateOwnedKeyAsync(expiringKey, 0, 1, 2, protocol, token);
+            }
             var remaining = (
                 await source.ExecuteAsync(new ValkeyCommand("CLUSTER", "GETKEYSINSLOT", number, "2"), token)
             ).AsArray();

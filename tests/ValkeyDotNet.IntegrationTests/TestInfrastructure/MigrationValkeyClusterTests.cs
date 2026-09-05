@@ -3,6 +3,25 @@ namespace ValkeyDotNet.IntegrationTests.TestInfrastructure;
 // Harness-only checks: these never start Docker or mutate a server.
 public sealed class MigrationValkeyClusterTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RefusesReplyLossBeforeOwnedClusterInitialization(bool includeReplica)
+    {
+        await using var cluster = new MigrationValkeyCluster(includeReplica);
+        var key = System.Text.Encoding.UTF8.GetBytes("{" + cluster.Project + ":0}");
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cluster.MigrateOwnedKeyWithLostReplyAsync(key, ValkeyProtocol.Resp3, TestContext.Current.CancellationToken)
+        );
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            cluster.MigrateOwnedKeyWithLostReplyAsync(
+                "unrelated"u8.ToArray(),
+                ValkeyProtocol.Resp3,
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
+
     [Fact]
     public async Task MigrationDebugIsExplicitLocalOnlyAndSeparateFromFailover()
     {
