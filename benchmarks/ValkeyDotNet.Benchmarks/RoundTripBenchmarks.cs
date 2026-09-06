@@ -50,8 +50,10 @@ internal static class RoundTripBenchmarks
                         })
                     );
                     RequireValid(workers);
+                    await ValidateLeaseStatesAsync(workers, client, token);
                     var result = await RoundTripMeasurements.MeasureAsync(workers, protocol, token);
                     RequireValid(workers);
+                    await ValidateLeaseStatesAsync(workers, client, token);
                     results.Add(result);
                     Console.WriteLine(
                         string.Create(
@@ -74,6 +76,7 @@ internal static class RoundTripBenchmarks
         var report = new
         {
             SchemaVersion = 1,
+            ProfileVersion = 2,
             TimestampUtc = DateTimeOffset.UtcNow,
             Runtime = RuntimeInformation.FrameworkDescription,
             OS = RuntimeInformation.OSDescription,
@@ -85,6 +88,7 @@ internal static class RoundTripBenchmarks
             Tls = false,
             CachePayloadBytes = 1024,
             LockOwnerBytes = 16,
+            IsolatedLeaseModel = "AcquireLease: one successful SET NX PX per distinct absent key; ReleaseLease: one warmed owner-checked script per pre-acquired key; 576 keys/worker, 120000 ms TTL; setup, validation and cleanup excluded",
             WarmupPerWorker = RoundTripMeasurements.WarmupIterations,
             MeasuredPerWorker = RoundTripMeasurements.Iterations,
             AllocationScope = "process-wide allocated bytes, client plus harness; not retained heap or server memory",
@@ -120,6 +124,21 @@ internal static class RoundTripBenchmarks
             throw new InvalidOperationException(
                 "Benchmark workload preflight/final validation failed; results are invalid."
             );
+        }
+    }
+
+    private static async Task ValidateLeaseStatesAsync(
+        RoundTripWorkload[] workers,
+        ValkeyClient client,
+        CancellationToken token
+    )
+    {
+        foreach (var worker in workers)
+        {
+            if (worker.IsolatedLease is not null)
+            {
+                await worker.IsolatedLease.ValidateStateAsync(client, token);
+            }
         }
     }
 }

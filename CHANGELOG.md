@@ -4,6 +4,9 @@
 
 ### Added
 
+- Independently timed successful lock acquisition and owner-checked release workloads in the
+  32-row round-trip profile, with distinct preplanned keys and full ownership/TTL correctness checks.
+
 - Bounded publish-throughput and default/BCAST invalidation-latency benchmarks, with acknowledgment
   versus delivery percentiles/rates, raw samples, separate correctness tests and a manual workflow.
 

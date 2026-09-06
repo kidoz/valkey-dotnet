@@ -34,7 +34,7 @@ jobs:
         run: |
           dotnet --info > artifacts/performance/dotnet-info.txt
           lscpu > artifacts/performance/cpu-info.txt
-      - name: Run bounded real-server profile
+      - name: Run bounded 32-row cache and lock profile
         run: dotnet run --no-build --configuration Release --project benchmarks/ValkeyDotNet.Benchmarks -- --roundtrips
       - name: Upload benchmark evidence
         if: always()

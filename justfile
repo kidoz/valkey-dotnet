@@ -237,7 +237,7 @@ test-roundtrip-workloads:
     -method '*OwnedRoundTripWorkloadsPreserveBinaryDataAndLockOutcomes' \
     -showLiveOutput -result-trx artifacts/performance/roundtrip-workloads.trx
 
-# Fixed, bounded real-server profile: RESP2/RESP3, 1/8 callers, 1 KiB values, one owned server.
+# Bounded 32-row profile: RESP2/RESP3, 1/8 callers, cache and cycle/isolated lock operations.
 bench-roundtrips:
     dotnet run -c Release --project {{ benchmarks }} -- --roundtrips
 

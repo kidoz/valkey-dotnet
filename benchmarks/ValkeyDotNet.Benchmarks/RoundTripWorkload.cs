@@ -12,6 +12,8 @@ internal enum RoundTripOperation
     AcquireReleaseCycle,
     ExtendLease,
     Pipeline100Get,
+    AcquireLease,
+    ReleaseLease,
 }
 
 internal sealed class RoundTripWorkload
@@ -45,6 +47,10 @@ internal sealed class RoundTripWorkload
         }
         _client = client;
         Operation = operation;
+        if (operation is RoundTripOperation.AcquireLease or RoundTripOperation.ReleaseLease)
+        {
+            IsolatedLease = new IsolatedLeaseWorkload(prefix, worker, operation == RoundTripOperation.ReleaseLease);
+        }
         Payload = Enumerable.Range(0, 1024).Select(i => (byte)i).ToArray();
         Owner = RandomNumberGenerator.GetBytes(16);
         var stem = prefix + ":" + worker.ToString(CultureInfo.InvariantCulture) + ":";
@@ -78,9 +84,15 @@ internal sealed class RoundTripWorkload
     internal byte[] Owner { get; }
     internal byte[][] DataKeys { get; }
     internal byte[] LockKey { get; }
+    internal IsolatedLeaseWorkload? IsolatedLease { get; }
 
     internal async Task SetupAsync(CancellationToken token)
     {
+        if (IsolatedLease is not null)
+        {
+            await IsolatedLease.SetupAsync(_client, token);
+            return;
+        }
         var commands = DataKeys.Select(key => new ValkeyCommand("SET", key, Payload, "PX", 120000)).ToArray();
         foreach (var reply in await _client.ExecutePipelineAsync(commands, token))
         {
@@ -98,6 +110,11 @@ internal sealed class RoundTripWorkload
 
     internal async Task ExecuteAsync(CancellationToken token)
     {
+        if (IsolatedLease is not null)
+        {
+            await IsolatedLease.ExecuteAsync(_client, token);
+            return;
+        }
         switch (Operation)
         {
             case RoundTripOperation.AcquireReleaseCycle:
@@ -124,6 +141,7 @@ internal sealed class RoundTripWorkload
     internal bool LastResultIsValid() =>
         Operation switch
         {
+            RoundTripOperation.AcquireLease or RoundTripOperation.ReleaseLease => IsolatedLease!.ResultsAreValid(),
             RoundTripOperation.Get => _lastReply is not null && _lastReply.AsBytes().Span.SequenceEqual(Payload),
             RoundTripOperation.SetPx => _lastReply?.AsString() == "OK",
             RoundTripOperation.ContendedSetNxPx => _lastReply?.IsNull == true,
@@ -136,6 +154,11 @@ internal sealed class RoundTripWorkload
 
     internal async Task CleanupAsync(CancellationToken token)
     {
+        if (IsolatedLease is not null)
+        {
+            await IsolatedLease.CleanupAsync(_client, token);
+            return;
+        }
         ValkeyArgument[] keys = [.. DataKeys.Select(key => new ValkeyArgument(key)), LockKey];
         await _client.ExecuteAsync(new ValkeyCommand("DEL", keys), token);
     }
