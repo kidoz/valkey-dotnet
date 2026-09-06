@@ -63,6 +63,14 @@ test-resubscribe-soak $resubscribe_cycles="30":
     -method '*OwnedResubscribeSoakPreservesStreamsAndBoundsSettledResources' \
     -showLiveOutput -result-trx artifacts/resilience/resubscribe-soak.trx
 
+# Concurrent exact-ID connection-loss cycles on fresh owned servers; explicit disruptive opt-in.
+test-concurrent-recovery $recovery_cycles="20":
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_CONCURRENT_RECOVERY=1 VALKEYDOTNET_CONCURRENT_RECOVERY_CYCLES="$recovery_cycles" \
+    dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedConcurrentRecoveryPreservesRepliesStreamsAndResourceBounds' \
+    -showLiveOutput -result-trx artifacts/resilience/concurrent-recovery.trx
+
 # Hold destination writes until one MIGRATE times out, then independently reconcile source-only placement.
 test-migrate-ioerr:
     mkdir -p artifacts/resilience

@@ -4,6 +4,9 @@
 
 ### Added
 
+- Opt-in concurrent recovery/resource test and manual workflow for four owners and four subscribers,
+  with exact-ID fault targeting, 64 concurrent callers, accepted-connection accounting and resource samples.
+
 - Independently timed successful lock acquisition and owner-checked release workloads in the
   32-row round-trip profile, with distinct preplanned keys and full ownership/TTL correctness checks.
 

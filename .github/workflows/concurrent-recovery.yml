@@ -1,0 +1,52 @@
+name: Concurrent recovery
+
+# Explicit dispatch authorizes faults only on newly created, identity-checked disposable servers.
+on:
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: Measured cycles per protocol (20 to 100, plus two warm-up cycles)
+        default: "20"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+      - name: Build and verify server-free correctness
+        run: |
+          dotnet tool restore
+          dotnet csharpier check .
+          dotnet build ValkeyDotNet.slnx --configuration Release
+          dotnet run --no-build --configuration Release --project tests/ValkeyDotNet.Tests
+          dotnet run --no-build --configuration Release --project tests/ValkeyDotNet.IntegrationTests -- -class '*TestInfrastructure.*'
+      - name: Run bounded concurrent recovery
+        env:
+          VALKEYDOTNET_RUN_CONCURRENT_RECOVERY: "1"
+          VALKEYDOTNET_CONCURRENT_RECOVERY_CYCLES: ${{ inputs.cycles }}
+        run: |
+          mkdir -p artifacts/resilience
+          dotnet run --no-build --configuration Release --project tests/ValkeyDotNet.IntegrationTests -- \
+            -method '*OwnedConcurrentRecoveryPreservesRepliesStreamsAndResourceBounds' \
+            -showLiveOutput -result-trx artifacts/resilience/concurrent-recovery.trx
+      - name: Upload recovery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: concurrent-recovery-results
+          path: artifacts/resilience/concurrent-recovery.trx
+          if-no-files-found: warn

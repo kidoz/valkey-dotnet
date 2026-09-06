@@ -1,5 +1,23 @@
 # Resilience evidence
 
+## Concurrent recovery runner — implemented, live execution pending
+
+The opt-in [concurrent recovery runner](../how-to/run-concurrent-recovery-tests.md) now defines
+four standalone connection owners and four subscribers per RESP2/RESP3 case, with 64 gated binary
+command calls following one exact-ID connection-loss burst. It checks restored settings/streams,
+exact replacement counts, sampled server-visible clients and owner active operations, and settled
+post-GC heap/supported handles. Counts, duration, queues and cleanup are bounded.
+
+Server-free verification passed 29 new identity/configuration/observation guards (246 harness
+tests total) and 484 library tests in Debug/Release; local `just ci` passed. Both live cases were
+verified to skip without opt-in.
+No live fault was injected and no new Docker container was created for this increment; explicit
+approval of the disposable target is still pending. The manual workflow has not been dispatched.
+
+This is implemented test infrastructure, **not executed concurrent-recovery evidence**. NFR-RES-004
+and NFR-PERF-005 remain partial. Even a successful run would measure overlapping recovery windows
+and sampled resource maxima, not exact process-wide socket/task/handle peaks or prolonged soak.
+
 This page separates implemented experiments from executed evidence. It is not a cache/lock
 production-readiness certification.
 

@@ -143,6 +143,15 @@ internal sealed class OwnedBenchmarkServer : IAsyncDisposable
         }
     }
 
+    internal async Task VerifyRunningOwnershipAsync(CancellationToken token)
+    {
+        if (!_created || _id is null || Port == 0)
+        {
+            throw new InvalidOperationException("No running owned fixture is available for fault injection.");
+        }
+        await VerifyOwnershipAsync(token);
+    }
+
     private async Task VerifyOwnershipAsync(CancellationToken token)
     {
         using var inspection = JsonDocument.Parse(await DockerAsync(["inspect", _id!], token));

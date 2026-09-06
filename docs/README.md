@@ -21,6 +21,7 @@ Observability: [Collect owner telemetry](how-to/collect-telemetry.md) and
 
 Performance: [run bounded real-server cache/lock benchmarks](how-to/run-roundtrip-benchmarks.md).
 Notifications: [run publish-throughput and invalidation-latency benchmarks](how-to/run-notification-benchmarks.md).
+Recovery: [run bounded concurrent recovery/resource tests](how-to/run-concurrent-recovery-tests.md).
 Allocation analysis: [profile GET and pipeline allocations](how-to/profile-allocations.md).
 
 Resilience: [Run isolated restart tests](how-to/run-resilience-tests.md) and
