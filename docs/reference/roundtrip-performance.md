@@ -63,11 +63,64 @@ created or removed. Existing Docker resources remained. The manual workflow was 
 
 These allocations are not retained memory or leak evidence. Percentiles are closed-loop request
 observations without coordinated-omission correction. The runner does not provide BenchmarkDotNet
-confidence/error estimates or a statistically stable regression threshold. Cold scripts, separate
-acquisition/release timings, publishing/invalidation delivery, cluster/TLS, other versions/payloads,
-same-key contention, and long-running resource behavior are outside this profile.
+confidence/error estimates or a statistically stable regression threshold. Separate acquisition/
+release timings are added below; publishing/invalidation delivery has its own
+[profile](notification-performance.md). Cold scripts, cluster/TLS, other versions/payloads,
+same-key contention and long-running resource behavior remain outside this profile.
 
 The measurements establish an end-to-end baseline for further allocation profiling; they do not
 identify which objects dominate allocation or establish that any particular optimization is safe.
 Subsequent [allocation profiling](allocation-profile.md) adds stack attribution and an isolated
 codec control without changing this baseline or the shipping library.
+
+## Isolated acquisition and release
+
+Three additional complete runs on 6 September 2026 (5 September UTC) used profile version 2:
+32 rows, adding `AcquireLease` and `ReleaseLease` in both protocols at one/eight callers. The original
+six workload definitions and their historical tables above are retained. The client/runtime/server/
+image/limits match the environment above; existing application and Valkey test services stayed up.
+These are new workload observations, not a before/after optimization comparison.
+
+Each worker has 576 distinct binary keys and a random 16-byte owner. Acquisition measures only a
+successful SET NX PX on an absent key. Release measures the warmed public ExecuteScriptAsync path
+for an owner-checked deletion of a pre-acquired key. Its command construction is included; seeding,
+ownership/TTL checks, and cleanup are outside timing. TTL is 120000 ms. There is no per-operation
+companion command. Script-cache warm-up and state checks affect cache/JIT history outside timing.
+The [run guide](../how-to/run-roundtrip-benchmarks.md) specifies these boundaries.
+
+Cells are minimum–maximum across three runs, rounded to whole units, not confidence intervals or
+pooled percentiles. One unit is one acquisition or one release, unlike the two-command cycle above.
+
+| Operation | RESP | Callers | Ops/s | Mean µs | p50 µs | p95 µs | p99 µs | Managed B/op |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| AcquireLease | 2 | 1 | 4575–4913 | 203–218 | 198–203 | 278–303 | 322–417 | 1736–1736 |
+| AcquireLease | 2 | 8 | 17523–31873 | 250–454 | 233–304 | 331–1087 | 428–3197 | 1535–1631 |
+| AcquireLease | 3 | 1 | 4763–4901 | 204–210 | 195–201 | 270–282 | 331–342 | 1736–1736 |
+| AcquireLease | 3 | 8 | 26921–29272 | 273–297 | 244–270 | 395–437 | 628–768 | 1611–1625 |
+| ReleaseLease | 2 | 1 | 3866–4640 | 215–259 | 204–232 | 278–421 | 401–758 | 2353–2353 |
+| ReleaseLease | 2 | 8 | 12282–31459 | 254–581 | 239–346 | 334–1038 | 397–7917 | 2181–2248 |
+| ReleaseLease | 3 | 1 | 4585–4831 | 207–218 | 199–210 | 270–284 | 336–401 | 2352–2352 |
+| ReleaseLease | 3 | 8 | 27920–30111 | 265–286 | 249–259 | 354–422 | 498–790 | 2244–2248 |
+
+The eight-caller RESP2 release p99 varied from 397 to 7917 µs. This spread prevents treating these
+short shared-host runs as regression thresholds or protocol rankings. Process-wide managed B/op
+includes the client and executing harness, excludes prepared inputs/final validation, and is not
+retained memory. Different key lengths, key reuse, harness paths and per-case scheduling also mean
+the isolated acquisition/release figures cannot simply be added to predict the cycle's cost.
+
+Reports under `artifacts/performance/`:
+
+- `roundtrips-valkey-dotnet-bench-f24e133b8bf44d828b8b2d7d62cf045e.json`
+- `roundtrips-valkey-dotnet-bench-29fe655eff19402a9fa702ddedffa97c.json`
+- `roundtrips-valkey-dotnet-bench-fa783c65de6f48a3808cd9d3862100f2.json`
+
+Each report has `ProfileVersion=2`, 32 rows, sample arrays of 512/4096 entries, and verified cleanup.
+Correctness gates preceded measurement: 484 unit tests, 217 server-free harness tests, and four live
+protocol/concurrency cases passed (4.411 seconds). The live suite covers all original workloads and
+all 576 isolated operations per worker, wrong-owner release rejection, held-key NX rejection,
+binary ownership/TTL or absence, setup/exhaustion guards and DBSIZE=0 after cleanup. Seven owned
+containers across correctness and measurement were removed; existing Docker inventory was unchanged.
+The manual workflow uses the expanded profile but was not dispatched. No shipping code or runtime
+dependency changed. NFR-PERF-002's requested operation set now has bounded local baseline coverage;
+same-key contention, broader load/topology/version/TLS profiles and prolonged resource evidence
+remain separate from that coverage and from production lock-safety claims.

@@ -65,6 +65,7 @@ pre-existing container/network inventory remained unchanged. The manual workflow
 dispatched. No shipping library code, API or runtime dependency changed.
 
 NFR-PERF-002 now has bounded notification evidence alongside the existing cache/lock profiles.
-Individually timed acquisition and release remain the next narrow benchmark gap. Wider server
+The [expanded round-trip profile](roundtrip-performance.md#isolated-acquisition-and-release) now adds
+individually timed acquisition and release. Wider server
 versions, payloads, fan-out, cluster/TLS, open-loop load, overflow/recovery and prolonged-resource
 profiles remain separate work; these results are not full performance acceptance.

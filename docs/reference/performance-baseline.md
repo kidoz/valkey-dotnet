@@ -6,6 +6,7 @@ contain no network round trip and are not throughput figures for a real Valkey d
 Separate [real-server cache/lock observations](roundtrip-performance.md) now cover round trips,
 shared-socket contention, request latency percentiles, and process-wide managed allocations.
 They use a different measurement contract and are not directly comparable with these codec numbers.
+The expanded round-trip profile also records [isolated acquisition/release observations](roundtrip-performance.md#isolated-acquisition-and-release).
 
 Separate [notification observations](notification-performance.md) cover publish acknowledgment/delivery
 throughput and default/BCAST tracking delivery latency, with the same bounded owned-server topology.
