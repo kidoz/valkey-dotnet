@@ -71,6 +71,15 @@ test-concurrent-recovery $recovery_cycles="20":
     -method '*OwnedConcurrentRecoveryPreservesRepliesStreamsAndResourceBounds' \
     -showLiveOutput -result-trx artifacts/resilience/concurrent-recovery.trx
 
+# Require Linux client descriptor evidence before starting the owned concurrent recovery experiment.
+test-concurrent-recovery-linux $recovery_cycles="20":
+    mkdir -p artifacts/resilience
+    VALKEYDOTNET_RUN_CONCURRENT_RECOVERY=1 VALKEYDOTNET_REQUIRE_LINUX_HANDLES=1 \
+    VALKEYDOTNET_CONCURRENT_RECOVERY_CYCLES="$recovery_cycles" \
+    dotnet run --configuration Release --project {{ integration_tests }} -- \
+    -method '*OwnedConcurrentRecoveryPreservesRepliesStreamsAndResourceBounds' \
+    -showLiveOutput -result-trx artifacts/resilience/concurrent-recovery-linux.trx
+
 # Hold destination writes until one MIGRATE times out, then independently reconcile source-only placement.
 test-migrate-ioerr:
     mkdir -p artifacts/resilience

@@ -20,6 +20,13 @@ public sealed class ValkeyConcurrentRecoveryIntegrationTests
         var cycles = ConcurrentRecoverySettings.ParseCycles(
             Environment.GetEnvironmentVariable("VALKEYDOTNET_CONCURRENT_RECOVERY_CYCLES")
         );
+        var requireLinuxHandles = RecoveryHandleMeasurement.RequireLinux(
+            Environment.GetEnvironmentVariable("VALKEYDOTNET_REQUIRE_LINUX_HANDLES"),
+            OperatingSystem.IsLinux()
+        );
+        // Fail before creating any Docker resource when required observation is unavailable.
+        using var probe = new RecoveryResourceProbe();
+        RecoveryHandleMeasurement.CheckAvailability(probe.ReadHandles(), requireLinuxHandles);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromMinutes(5));
         var token = deadline.Token;
@@ -43,7 +50,9 @@ public sealed class ValkeyConcurrentRecoveryIntegrationTests
             )
             .ToArray();
         var resources = new List<IAsyncDisposable>();
-        using var probe = new RecoveryResourceProbe();
+        output?.WriteLine(
+            $"handle_source={RecoveryHandleMeasurement.Source}; linux_handles_required={requireLinuxHandles}"
+        );
         try
         {
             for (var index = 0; index < ConcurrentRecoverySettings.Participants; index++)
@@ -91,6 +100,8 @@ public sealed class ValkeyConcurrentRecoveryIntegrationTests
             probe.Capture(ConcurrentRecoverySettings.ExpectedClients);
             long baselineHeap = 0;
             int? baselineHandles = null;
+            int? maximumSettledHandles = null;
+            int? finalHandles = null;
             long maximumSettledHeap = 0;
             for (var cycle = 1; cycle <= cycles + ConcurrentRecoverySettings.WarmupCycles; cycle++)
             {
@@ -186,9 +197,9 @@ public sealed class ValkeyConcurrentRecoveryIntegrationTests
                 }
                 Assert.Equal(0, probe.ActiveOperations());
                 var heap = GC.GetTotalMemory(forceFullCollection: true);
-                using var process = System.Diagnostics.Process.GetCurrentProcess();
-                var count = process.HandleCount;
-                int? handlesNow = count > 0 ? count : null;
+                var handlesNow = probe.ReadHandles();
+                RecoveryHandleMeasurement.CheckAvailability(handlesNow, requireLinuxHandles);
+                finalHandles = handlesNow;
                 if (cycle == ConcurrentRecoverySettings.WarmupCycles)
                 {
                     baselineHeap = heap;
@@ -201,18 +212,19 @@ public sealed class ValkeyConcurrentRecoveryIntegrationTests
                         heap <= baselineHeap + ConcurrentRecoverySettings.HeapGrowthBudget,
                         "Post-GC heap grew beyond the 16 MiB smoke budget."
                     );
-                    if (baselineHandles is not null && handlesNow is not null)
+                    RecoveryHandleMeasurement.CheckGrowth(baselineHandles, handlesNow);
+                    if (handlesNow is not null)
                     {
-                        Assert.True(
-                            handlesNow <= baselineHandles + 32,
-                            "Settled process handles exceeded the growth budget."
-                        );
+                        maximumSettledHandles = Math.Max(maximumSettledHandles ?? 0, handlesNow.Value);
                     }
                 }
                 output?.WriteLine(
                     $"cycle={cycle}; killed=8; accepted_replacements=8; overlapping_subscriber_recoveries=4; replies=64; deliveries=4; settled_clients=10; active_owner_operations=0; outstanding_burst_tasks=0; heap_bytes={heap}; handles={(handlesNow?.ToString(CultureInfo.InvariantCulture) ?? "unsupported")}"
                 );
             }
+            output?.WriteLine(
+                $"Settled handles: source={RecoveryHandleMeasurement.Source}; baseline={FormatHandles(baselineHandles)}; maximum={FormatHandles(maximumSettledHandles)}; final={FormatHandles(finalHandles)}; growth_budget={RecoveryHandleMeasurement.GrowthBudget}"
+            );
             output?.WriteLine(
                 $"Resource summary: samples={probe.Samples}; max_sampled_clients={probe.MaximumClients}; max_sampled_active_owner_operations={probe.MaximumActiveOwnerOperations}; max_scheduled_burst_tasks=64; baseline_heap={baselineHeap}; max_settled_heap={maximumSettledHeap}; max_sampled_live_heap={probe.MaximumLiveHeap}; max_sampled_working_set={probe.MaximumWorkingSet}; max_sampled_handles={(probe.MaximumHandles?.ToString(CultureInfo.InvariantCulture) ?? "unsupported")}; max_pool_threads={probe.MaximumPoolThreads}; max_queued_pool_work={probe.MaximumQueuedPoolWork}"
             );
@@ -319,6 +331,8 @@ public sealed class ValkeyConcurrentRecoveryIntegrationTests
             }
         }
     }
+
+    private static string FormatHandles(int? count) => count?.ToString(CultureInfo.InvariantCulture) ?? "unsupported";
 
     private static async Task<RecoveryClient[]> ClientsAsync(ValkeyClient client, CancellationToken token) =>
         ConcurrentRecoverySettings.ParseClients(

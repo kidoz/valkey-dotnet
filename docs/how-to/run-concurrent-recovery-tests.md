@@ -15,6 +15,31 @@ The manual **Concurrent recovery** workflow performs the same experiment on isol
 server-free correctness gates. No automatic push/PR run injects these faults. Results and resource
 summaries go to `artifacts/resilience/concurrent-recovery.trx`.
 
+## Require Linux descriptor evidence
+
+Run the client itself on Linux with readable procfs and a local Docker daemon, then use:
+
+```bash
+just test-concurrent-recovery-linux
+```
+
+This sets `VALKEYDOTNET_REQUIRE_LINUX_HANDLES=1` and writes
+`artifacts/resilience/concurrent-recovery-linux.trx`. A non-Linux client, missing/empty descriptor
+observation or invalid mode value fails before server creation. Only unset, `0` and `1` are accepted
+for that setting. The manual Ubuntu workflow always enables this requirement; it cannot pass with
+unsupported handle readings. Do not mount your host Docker socket into a measurement container to
+work around a non-Linux workstation; run the workflow on a reviewed, pushed ref instead.
+
+To verify only the measurement helper on Linux, without Docker or a Valkey server:
+
+```bash
+dotnet run --configuration Release --project tests/ValkeyDotNet.IntegrationTests -- \
+  -class '*RecoveryHandleMeasurementTests' -showLiveOutput
+```
+
+That helper test opens 64 read-only `/dev/null` files, verifies their descriptor entries and disposes
+them. It does not establish recovery resource bounds. The Linux-only case skips on other platforms.
+
 ## Experiment contract
 
 Four independent connection owners and four independent subscribers share one standalone server.
@@ -51,7 +76,12 @@ queues must have zero drops and drain on unsubscribe.
 
 The summary records sampled client/active-owner-operation maxima, live managed heap, working set,
 process handles when supported, thread-pool threads and queued work. A zero handle count is reported
-as unsupported. Sampling can miss short-lived peaks. The admitted-operation gauge is process-wide,
+as unsupported outside Linux. Linux counts entries in `/proc/self/fd`, the current process's descriptor
+directory ([kernel documentation](https://docs.kernel.org/filesystems/proc.html)), without following
+targets or logging paths. Enumeration stops and fails at entry 4,097; empty or inaccessible readings
+fail rather than becoming unsupported. Counts include all process descriptors, not just Valkey sockets,
+and may include the observer's enumeration descriptor. This is not an atomic snapshot.
+Sampling can miss short-lived peaks. The admitted-operation gauge is process-wide,
 not physical FIFO occupancy; harness task counts are not counts of every library/runtime task.
 Thread-pool work is not a task-object count. No process-wide transient socket/handle/task maximum
 or leak-free claim follows from this experiment.
@@ -61,6 +91,8 @@ The smoke budgets are +16 MiB heap and +32 handles. Live heap, working set and t
 recorded rather than assigned portable thresholds. All measurements include test-runner/harness
 work, and full GC between cycles changes workload behavior. Even the maximum cycle count is bounded
 resource evidence, not a prolonged production soak or throughput/latency benchmark.
+The handle summary explicitly records its source, baseline, maximum settled count and final count.
+A previously supported sampled or baseline reading becoming unavailable fails the experiment.
 
 ## Abort and cleanup
 

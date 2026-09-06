@@ -38,6 +38,7 @@ jobs:
         env:
           VALKEYDOTNET_RUN_CONCURRENT_RECOVERY: "1"
           VALKEYDOTNET_CONCURRENT_RECOVERY_CYCLES: ${{ inputs.cycles }}
+          VALKEYDOTNET_REQUIRE_LINUX_HANDLES: "1"
         run: |
           mkdir -p artifacts/resilience
           dotnet run --no-build --configuration Release --project tests/ValkeyDotNet.IntegrationTests -- \

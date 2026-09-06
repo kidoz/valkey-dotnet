@@ -4,6 +4,9 @@
 
 ### Added
 
+- Fail-closed Linux descriptor measurements for concurrent recovery tests, with bounded procfs
+  observations, baseline/maximum/final counts and required Linux evidence in the manual workflow.
+
 - Opt-in concurrent recovery/resource test and manual workflow for four owners and four subscribers,
   with exact-ID fault targeting, 64 concurrent callers, accepted-connection accounting and resource samples.
 

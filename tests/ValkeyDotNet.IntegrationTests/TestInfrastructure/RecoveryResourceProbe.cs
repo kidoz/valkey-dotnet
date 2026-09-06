@@ -55,14 +55,17 @@ internal sealed class RecoveryResourceProbe : IDisposable
         MaximumLiveHeap = Math.Max(MaximumLiveHeap, GC.GetTotalMemory(forceFullCollection: false));
         _process.Refresh();
         MaximumWorkingSet = Math.Max(MaximumWorkingSet, _process.WorkingSet64);
-        var handles = _process.HandleCount;
-        if (handles > 0)
+        var handles = ReadHandles();
+        RecoveryHandleMeasurement.CheckAvailability(handles, required: MaximumHandles is not null);
+        if (handles is not null)
         {
-            MaximumHandles = Math.Max(MaximumHandles ?? 0, handles);
+            MaximumHandles = Math.Max(MaximumHandles ?? 0, handles.Value);
         }
         MaximumPoolThreads = Math.Max(MaximumPoolThreads, ThreadPool.ThreadCount);
         MaximumQueuedPoolWork = Math.Max(MaximumQueuedPoolWork, ThreadPool.PendingWorkItemCount);
     }
+
+    internal int? ReadHandles() => RecoveryHandleMeasurement.Read(_process);
 
     public void Dispose()
     {
