@@ -1,25 +1,89 @@
 # Resilience evidence
 
-## Concurrent recovery runner — implemented, live execution pending
-
-The opt-in [concurrent recovery runner](../how-to/run-concurrent-recovery-tests.md) now defines
-four standalone connection owners and four subscribers per RESP2/RESP3 case, with 64 gated binary
-command calls following one exact-ID connection-loss burst. It checks restored settings/streams,
-exact replacement counts, sampled server-visible clients and owner active operations, and settled
-post-GC heap/supported handles. Counts, duration, queues and cleanup are bounded.
-
-Server-free verification passed 29 new identity/configuration/observation guards (246 harness
-tests total) and 484 library tests in Debug/Release; local `just ci` passed. Both live cases were
-verified to skip without opt-in.
-No live fault was injected and no new Docker container was created for this increment; explicit
-approval of the disposable target is still pending. The manual workflow has not been dispatched.
-
-This is implemented test infrastructure, **not executed concurrent-recovery evidence**. NFR-RES-004
-and NFR-PERF-005 remain partial. Even a successful run would measure overlapping recovery windows
-and sampled resource maxima, not exact process-wide socket/task/handle peaks or prolonged soak.
-
 This page separates implemented experiments from executed evidence. It is not a cache/lock
 production-readiness certification.
+
+## Linux descriptor probe — 2026-09-06
+
+The concurrent recovery runner now reads Linux client descriptor counts from `/proc/self/fd`, with
+a 4,096-entry bound, fail-closed observation and the existing +32 settled-growth budget. Its summary
+includes measurement source and baseline/maximum/final settled counts. The manual Ubuntu workflow
+requires Linux readings; the new `just test-concurrent-recovery-linux` entry point has the same
+preflight requirement. Missing readings cannot silently become passing unsupported evidence.
+
+All 17 measurement-helper tests passed in 0.109 seconds in a fresh Linux arm64/.NET 10.0.11 container.
+The actual procfs probe observed 87 descriptors before opening 64 read-only `/dev/null` files, 151
+while held, and 87 after disposal; every held file's descriptor entry was verified. Synthetic guards
+cover empty/failed/over-limit enumeration, disposal of a rejected enumerator, unsupported platforms,
+invalid mode settings, lost observations, and growth boundaries. This is helper validation, **not a
+Linux concurrent-recovery run** and not a process-wide leak proof.
+
+The probe used the already cached runtime image
+`mcr.microsoft.com/dotnet/runtime:10.0@sha256:a365ce6a50b09176855d085c69da3fc1204a48432e36087e9a208f6e5860e235`,
+with no network or Docker-socket access, a read-only compiled-test mount/root, non-root user, no
+capabilities, 256 MiB/one CPU/64 PIDs, 16 MiB temporary storage and a 30-second process timeout. The
+exact container `valkey-dotnet-fd-probe-20260906-01` was automatically removed; existing resources
+remained untouched. Separately, both Linux-required recovery cases deliberately failed on macOS at
+platform preflight before server creation, as expected. Negative evidence:
+`artifacts/resilience/linux-handles-macos-preflight.trx`.
+
+Local `just ci`, warning-free Debug/Release builds and all 484 unit tests passed in both
+configurations. The harness passed 262 cases per configuration with the one Linux-only probe skipped
+on macOS; that case passed in the Linux container above. Both live recovery cases still skipped
+without opt-in. Formatting and diff checks passed. No new Valkey fault was injected in this increment.
+
+Linux recovery-cycle measurements remain pending execution of the updated manual workflow on a
+reviewed, pushed ref. No workflow dispatch, commit or shipping-library change occurred. NFR-RES-004
+and NFR-PERF-005 remain partial; the earlier macOS recovery observations below remain valid within
+their stated limits. See the [Linux run instructions](../how-to/run-concurrent-recovery-tests.md#require-linux-descriptor-evidence).
+
+## Concurrent recovery — 2026-09-06
+
+`just test-concurrent-recovery` passed both RESP2/RESP3 cases in 42.548 seconds, with no failures or
+skips. Each used a fresh owned standalone Valkey 9.1.2 container, with one CPU, 128 MiB, temporary
+storage, persistence and DEBUG disabled. The Release client ran on macOS 26.6.2 arm64 with
+.NET 10.0.11; servers ran Linux 7.0.12-linuxkit aarch64 without TLS. The image ID was
+`sha256:475ee65cc75c327407458f5096cdd36954b3de3fc83f4c8ac31a4a8edecbf49e`.
+See the [experiment contract and bounds](../how-to/run-concurrent-recovery-tests.md).
+
+Each protocol completed two warm-up and 20 measured cycles. Every cycle closed only eight exact,
+freshly verified worker IDs, observed four overlapping subscriber recovery windows, released
+64 gated binary ECHO calls across four connection owners, and verified delivery on all four retained
+subscriber streams. All replies matched their callers, every cycle accepted exactly eight replacement
+connections, and restored names/database/protocol/subscriptions matched. There were zero drops or
+subscriber failures. Across both protocols including warm-up, this is 352 replacements, 2,816 replies
+and 176 post-recovery deliveries. No in-flight mutation was faulted and no command replay occurred.
+
+| Observation | RESP2 | RESP3 |
+| --- | ---: | ---: |
+| Resource samples | 967 | 921 |
+| Maximum sampled server-visible clients | 10 | 10 |
+| Maximum sampled active owner operations | 64 | 64 |
+| Post-warm-up baseline managed heap (bytes) | 2,102,504 | 2,376,584 |
+| Maximum settled managed heap after baseline (bytes) | 2,311,672 | 2,411,024 |
+| Maximum settled growth over baseline (bytes) | 209,168 | 34,440 |
+| Maximum sampled live managed heap (bytes) | 8,212,688 | 7,787,520 |
+| Maximum sampled working set (bytes) | 117,325,824 | 118,816,768 |
+| Maximum sampled thread-pool threads / queued work | 17 / 4 | 13 / 1 |
+
+Every cycle settled to ten clients, zero active owner operations and zero outstanding tracked burst
+tasks. Both heap-growth observations were below the 16 MiB smoke budget. macOS reported handle counts
+as unsupported, so the handle-growth check supplied no evidence. Unsubscribe drained all retained
+streams; teardown verified empty channels, zero keys and only the two inspectors remaining before
+closing them. Both owned containers were removed. Exact pre-existing container/network IDs remained
+unchanged (nine containers, ten networks), with existing application services still healthy. Evidence:
+`artifacts/resilience/concurrent-recovery.trx`. The manual workflow was not dispatched.
+
+Post-fault verification passed `just ci`, warning-free Debug/Release builds, all 484 unit tests
+and all 246 server-free harness checks in both configurations. Formatting and `git diff --check`
+passed. No files were staged or committed; the existing `.gitignore` edit was left untouched.
+
+NFR-RES-004 and NFR-PERF-005 remain **partial**. This is a short standalone run with a configured
+subscriber recovery delay and full GC between cycles, not prolonged soak, cluster recovery, default
+backoff certification, or proof of simultaneous TCP connects. Sampling may miss peaks; the tracked
+burst tasks and thread-pool observations do not count every runtime/library task. Exact process-wide
+socket/task/handle bounds, meaningful supported-handle evidence, and broader platforms/load remain
+separate work. No shipping code, dependencies, retry behavior or test thresholds changed for this run.
 
 ## Atomic cutover queued writes — 2026-09-06
 
