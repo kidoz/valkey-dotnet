@@ -46,6 +46,22 @@ public sealed class ValkeyServerException : ValkeyException, IValkeyCommandFailu
     public ValkeyCommandDeliveryStatus DeliveryStatus => ValkeyCommandDeliveryStatus.ReplyReceived;
 }
 
+/// <summary>
+/// ASKING and its following command both returned errors. The command's effects remain ambiguous,
+/// but both replies were consumed and the connection remains usable. No automatic replay is allowed.
+/// </summary>
+public sealed class ValkeyAskingException : ValkeyException, IValkeyCommandFailure
+{
+    internal ValkeyAskingException(ValkeyServerException commandError)
+        : base(
+            "ASKING failed and the following command returned an error; its effects may have occurred.",
+            commandError
+        ) { }
+
+    /// <inheritdoc />
+    public ValkeyCommandDeliveryStatus DeliveryStatus => ValkeyCommandDeliveryStatus.MayHaveBeenSent;
+}
+
 public sealed class ValkeyConnectionException : ValkeyException, IValkeyCommandFailure
 {
     public ValkeyConnectionException(string message, Exception innerException)

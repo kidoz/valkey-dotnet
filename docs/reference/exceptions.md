@@ -14,6 +14,7 @@ Exception
     ├── ValkeyProtocolException
     ├── ValkeyServerException
     ├── ValkeyConnectionException
+    ├── ValkeyAskingException
     ├── ValkeyCapacityException
     ├── ValkeyClusterException
     └── ValkeyUnsupportedCommandException
@@ -83,6 +84,14 @@ documents independent per-key placement checks in both batch orders.
 
 Thrown by `ExecuteAsync` and the convenience methods. **Not** thrown by `ExecutePipelineAsync`, which
 returns errors in place — call `ThrowIfError()` on each reply.
+
+## `ValkeyAskingException`
+
+Both `ASKING` and its pipelined command returned error replies. Carries the command's
+`ValkeyServerException` as `InnerException` and reports `MayHaveBeenSent`: the error does not prove
+that the command had no effects. Redirect and script-cache recovery do not replay this command.
+Both replies have been consumed, so the pooled connection remains usable and other pending callers
+still receive their own replies.
 
 ## `ValkeyConnectionException`
 
@@ -168,6 +177,7 @@ The library also surfaces standard exceptions directly:
 | `ArgumentException` family (thrown before any write) | yes |
 | `ValkeyProtocolException` | no |
 | `ValkeyConnectionException` | no |
+| `ValkeyAskingException` | yes |
 | `ValkeyCommandCanceledException` after enqueue | no |
 
 See [Handle errors](../how-to/handle-errors.md) for the practical pattern and

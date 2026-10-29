@@ -163,7 +163,7 @@ public sealed class ValkeyClusterClientScriptTests
         );
         if (commandError)
         {
-            var failure = await Assert.ThrowsAsync<ValkeyConnectionException>(() => call);
+            var failure = await Assert.ThrowsAsync<ValkeyAskingException>(() => call);
             Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, failure.DeliveryStatus);
         }
         else

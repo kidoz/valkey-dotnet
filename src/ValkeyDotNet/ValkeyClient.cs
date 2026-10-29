@@ -267,11 +267,7 @@ public sealed partial class ValkeyClient : IAsyncDisposable
         {
             // Both commands were written. An ASKING rejection cannot prove that the following
             // command did not execute, and must not authorize redirect or script-cache replay.
-            throw new ValkeyConnectionException(
-                "ASKING failed and the following command returned an error; its effects may have occurred.",
-                response.ToServerException(),
-                ValkeyCommandDeliveryStatus.MayHaveBeenSent
-            );
+            throw new ValkeyAskingException(response.ToServerException());
         }
         return response;
     }

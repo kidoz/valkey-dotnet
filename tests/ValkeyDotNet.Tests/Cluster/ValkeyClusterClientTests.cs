@@ -650,7 +650,7 @@ public sealed class ValkeyClusterClientTests
                 : await cluster.ExecuteAsync(key, command, TestContext.Current.CancellationToken);
         if (commandError)
         {
-            var failure = await Assert.ThrowsAsync<ValkeyConnectionException>(ExecuteAsync);
+            var failure = await Assert.ThrowsAsync<ValkeyAskingException>(ExecuteAsync);
             Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, failure.DeliveryStatus);
             Assert.Equal("NOSCRIPT", Assert.IsType<ValkeyServerException>(failure.InnerException).ErrorCode);
         }
@@ -660,6 +660,95 @@ public sealed class ValkeyClusterClientTests
         }
         await target.Session;
         Assert.Single(target.ReceivedCommands, command => command[0] == "INCR");
+    }
+
+    [Theory]
+    [InlineData(false, "MOVED")]
+    [InlineData(false, "NOSCRIPT")]
+    [InlineData(true, "MOVED")]
+    [InlineData(true, "NOSCRIPT")]
+    public async Task FailedAskingPreservesTheSocketAndItsPendingNeighbor(bool pipeline, string errorCode)
+    {
+        const string key = "{asking}:write";
+        var slot = ValkeyClusterClient.GetHashSlot(key);
+        var pairWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseNeighbor = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        FakeValkeyServer? targetServer = null;
+        targetServer = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            Assert.Equal(["INCR", key], await session.ReadCommandAsync());
+            await session.SendAsync($"-ASK {slot} 127.0.0.1:{targetServer!.Port}\r\n");
+            Assert.Equal(["ASKING"], await session.ReadCommandAsync());
+            Assert.Equal(["INCR", key], await session.ReadCommandAsync());
+            pairWritten.TrySetResult();
+            Assert.Equal(["GET", "neighbor"], await session.ReadCommandAsync());
+            var commandError =
+                errorCode == "MOVED"
+                    ? $"-MOVED {slot} 127.0.0.1:{targetServer.Port}\r\n"
+                    : "-NOSCRIPT No matching script.\r\n";
+            await session.SendAsync("-ERR ASKING refused\r\n" + commandError);
+            await releaseNeighbor.Task;
+            await session.SendAsync("+neighbor-reply\r\n");
+            Assert.Equal(["GET", "later"], await session.ReadCommandAsync());
+            await session.SendAsync("+same-socket\r\n");
+        });
+        await using var target = targetServer;
+        await using var seed = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.SendAsync(ShardsTopology(target.Port));
+            await session.ReadCommandAsync();
+        });
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            Options(seed.Port),
+            TestContext.Current.CancellationToken
+        );
+        async Task ExecuteFailureAsync()
+        {
+            var command = new ValkeyCommand("INCR", key);
+            if (pipeline)
+            {
+                await cluster.ExecutePipelineAsync(
+                    [new ValkeyClusterCommand(key, command)],
+                    TestContext.Current.CancellationToken
+                );
+            }
+            else
+            {
+                await cluster.ExecuteAsync(key, command, TestContext.Current.CancellationToken);
+            }
+        }
+        var failing = Record.ExceptionAsync(ExecuteFailureAsync).AsTask();
+        try
+        {
+            await pairWritten.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            var neighbor = cluster.GetStringAsync("neighbor", TestContext.Current.CancellationToken);
+            var failure = await failing.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            Assert.NotNull(failure);
+            Assert.IsType<ValkeyAskingException>(failure);
+            Assert.Equal(
+                ValkeyCommandDeliveryStatus.MayHaveBeenSent,
+                Assert.IsAssignableFrom<IValkeyCommandFailure>(failure).DeliveryStatus
+            );
+            Assert.Equal(errorCode, Assert.IsType<ValkeyServerException>(failure.InnerException).ErrorCode);
+            Assert.False(neighbor.IsCompleted);
+            releaseNeighbor.TrySetResult();
+            Assert.Equal(
+                "neighbor-reply",
+                await neighbor.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken)
+            );
+            Assert.Equal("same-socket", await cluster.GetStringAsync("later", TestContext.Current.CancellationToken));
+            await target.Session;
+            Assert.Single(target.ReceivedCommands, command => command[0] == "HELLO");
+            Assert.Equal(2, target.ReceivedCommands.Count(command => command[0] == "INCR"));
+            Assert.Single(target.ReceivedCommands, command => command[0] == "ASKING");
+        }
+        finally
+        {
+            releaseNeighbor.TrySetResult();
+        }
     }
 
     [Fact]
