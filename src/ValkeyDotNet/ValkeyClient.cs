@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading.Channels;
 using ValkeyDotNet.Protocol;
 
 namespace ValkeyDotNet;
@@ -45,6 +46,10 @@ public sealed partial class ValkeyClient : IAsyncDisposable
     private readonly SemaphoreSlim _pendingCapacity;
     private readonly ConcurrentQueue<TaskCompletionSource<RespValue>> _pendingResponses = new();
     private readonly CancellationTokenSource _readerShutdown = new();
+    private readonly Channel<RespValue> _pushes = Channel.CreateBounded<RespValue>(
+        new BoundedChannelOptions(256) { AllowSynchronousContinuations = false }
+    );
+    private long _droppedPushCount;
     private Task? _responseLoop;
     private int _disposed;
 
@@ -74,9 +79,14 @@ public sealed partial class ValkeyClient : IAsyncDisposable
 
     /// <summary>
     /// Raised when a RESP3 push frame is encountered while reading command responses.
-    /// The client reads pushes continuously after the handshake completes.
+    /// The client reads pushes continuously after the handshake completes. Handlers run sequentially
+    /// on a background worker, outside the reader. A full 256-frame queue drops incoming pushes.
+    /// Handler exceptions are ignored. Disposal discards queued pushes; an active handler may finish.
     /// </summary>
     public event Action<RespValue>? PushReceived;
+
+    /// <summary>The number of incoming push events dropped because the notification queue was full.</summary>
+    public long DroppedPushCount => Interlocked.Read(ref _droppedPushCount);
 
     public static async Task<ValkeyClient> ConnectAsync(
         ValkeyClientOptions? options = null,
@@ -457,7 +467,30 @@ public sealed partial class ValkeyClient : IAsyncDisposable
         return await ReadNonPushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private void StartResponseLoop() => _responseLoop = ReadResponsesAsync();
+    private void StartResponseLoop()
+    {
+        _ = Task.Run(DispatchPushesAsync);
+        _responseLoop = ReadResponsesAsync();
+    }
+
+    private async Task DispatchPushesAsync()
+    {
+        await foreach (var push in _pushes.Reader.ReadAllAsync().ConfigureAwait(false))
+        {
+            if (IsDisposed)
+            {
+                continue;
+            }
+            try
+            {
+                PushReceived?.Invoke(push);
+            }
+            catch
+            {
+                // Application handlers cannot corrupt wire state or stop notification delivery.
+            }
+        }
+    }
 
     private async Task<RespValue> SendMultiplexedAsync(
         byte[] payload,
@@ -703,12 +736,9 @@ public sealed partial class ValkeyClient : IAsyncDisposable
             if (response.Type != RespType.Push)
                 return response;
             _tracking?.OnPush(response);
-            try
+            if (PushReceived is not null && !_pushes.Writer.TryWrite(response))
             {
-                PushReceived?.Invoke(response);
-            }
-            catch
-            { /* User callbacks cannot be allowed to corrupt the wire state. */
+                Interlocked.Increment(ref _droppedPushCount);
             }
         }
     }
@@ -817,6 +847,11 @@ public sealed partial class ValkeyClient : IAsyncDisposable
             return;
 
         _tracking?.InvalidateAll();
+        _pushes.Writer.TryComplete();
+        while (_pushes.Reader.TryRead(out _))
+        {
+            // Do not retain queued frames behind a blocked application handler after termination.
+        }
         _readerShutdown.Cancel();
         try
         {

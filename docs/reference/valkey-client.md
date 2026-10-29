@@ -31,11 +31,16 @@ Idempotent. Closes the stream and the socket.
 |---|---|---|
 | `ServerInfo` | `RespValue` | The reply to the initial `HELLO`. `RespValue.Null()` until connected. |
 | `NegotiatedProtocol` | `ValkeyProtocol` | The protocol the server reported in its `HELLO` reply, which may be lower than `Protocol` requested. A reply that reports no supported version fails the connect with `ValkeyProtocolException`. |
-| `PushReceived` | `event Action<RespValue>?` | Raised when a RESP3 push frame is read while awaiting a command reply. |
+| `PushReceived` | `event Action<RespValue>?` | Raised for RESP3 pushes on a background notification worker. |
+| `DroppedPushCount` | `long` | Incoming push events dropped because the 256-frame notification queue was full. |
 
-`PushReceived` fires on the client's response-reader continuation. That reader runs continuously after
-the handshake, so RESP3 pushes can surface while no command is in flight. Exceptions thrown by a
-handler are swallowed so a caller bug cannot desynchronize the wire.
+The reader runs continuously after the handshake, so pushes can surface while no command is in flight.
+`PushReceived` handlers run sequentially outside the reader and can call the same client. Handler
+exceptions are swallowed. Delivery can occur after the associated command reply. A slow handler
+fills a bounded 256-frame queue; incoming events are then dropped and counted. Queue capacity bounds
+frame count, while retained bytes also depend on `MaxResponseBytes`. Tracking invalidations use their
+own stream and remain independent of this event queue. Disposal discards queued events without
+waiting for an active application handler to finish.
 
 ## Generic commands
 

@@ -207,26 +207,36 @@ public sealed class ValkeyClientTests
     [Fact]
     public async Task ExecuteAsyncDeliversPushFramesAndStillReturnsTheReply()
     {
+        var received = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = FakeValkeyServer.Start(async session =>
         {
             await session.ExpectHandshakeAsync();
             await session.ReadCommandAsync();
             await session.SendAsync(">2\r\n+invalidate\r\n$3\r\nkey\r\n+PONG\r\n");
+            await release.Task;
         });
         await using var client = await ValkeyClient.ConnectAsync(
             server.ClientOptions(),
             TestContext.Current.CancellationToken
         );
-        var pushes = new List<RespValue>();
-        client.PushReceived += pushes.Add;
-
-        Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
-        Assert.Equal("invalidate", Assert.Single(pushes).AsArray()[0].AsString());
+        client.PushReceived += push => received.TrySetResult(push);
+        try
+        {
+            Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
+            var push = await received.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            Assert.Equal("invalidate", push.AsArray()[0].AsString());
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
     }
 
     [Fact]
     public async Task AFailingPushHandlerDoesNotDesynchronizeTheConnection()
     {
+        var invoked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = FakeValkeyServer.Start(async session =>
         {
             await session.ExpectHandshakeAsync();
@@ -239,10 +249,106 @@ public sealed class ValkeyClientTests
             server.ClientOptions(),
             TestContext.Current.CancellationToken
         );
-        client.PushReceived += _ => throw new InvalidOperationException("handler bug");
+        client.PushReceived += _ =>
+        {
+            invoked.TrySetResult();
+            throw new InvalidOperationException("handler bug");
+        };
 
         Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
+        await invoked.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
         Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task PushHandlerCanSynchronouslyCallTheSameClient()
+    {
+        var finished = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            Assert.Equal(["PING"], await session.ReadCommandAsync());
+            await session.SendAsync(">1\r\n+event\r\n+PONG\r\n");
+            Assert.Equal(["PING"], await session.ReadCommandAsync());
+            await session.SendAsync("+PONG\r\n");
+            await release.Task;
+        });
+        await using var client = await ValkeyClient.ConnectAsync(
+            server.ClientOptions(),
+            TestContext.Current.CancellationToken
+        );
+        client.PushReceived += _ =>
+        {
+            try
+            {
+                finished.TrySetResult(client.PingAsync(TestContext.Current.CancellationToken).GetAwaiter().GetResult());
+            }
+            catch (Exception exception)
+                when (exception is ValkeyException or OperationCanceledException or ObjectDisposedException)
+            {
+                finished.TrySetException(exception);
+            }
+        };
+        try
+        {
+            Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(
+                "PONG",
+                await finished.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken)
+            );
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+    }
+
+    [Fact]
+    public async Task SlowPushHandlersDoNotBlockRepliesAndOverflowIsBounded()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sendBurst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseHandler = new ManualResetEventSlim();
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            Assert.Equal(["PING"], await session.ReadCommandAsync());
+            await session.SendAsync(">1\r\n+event\r\n+PONG\r\n");
+            await sendBurst.Task;
+            await session.SendAsync(string.Concat(Enumerable.Repeat(">1\r\n+event\r\n", 300)));
+            Assert.Equal(["PING"], await session.ReadCommandAsync());
+            await session.SendAsync("+PONG\r\n");
+            await session.ReadCommandAsync();
+        });
+        await using var client = await ValkeyClient.ConnectAsync(
+            server.ClientOptions(),
+            TestContext.Current.CancellationToken
+        );
+        client.PushReceived += _ =>
+        {
+            entered.TrySetResult();
+            releaseHandler.Wait(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        };
+        try
+        {
+            Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            sendBurst.TrySetResult();
+            Assert.Equal(
+                "PONG",
+                await client
+                    .PingAsync(TestContext.Current.CancellationToken)
+                    .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken)
+            );
+            Assert.Equal(44, client.DroppedPushCount);
+            await client.DisposeAsync(); // Disposal also completes while a handler remains blocked.
+        }
+        finally
+        {
+            sendBurst.TrySetResult();
+            releaseHandler.Set();
+        }
     }
 
     [Fact]

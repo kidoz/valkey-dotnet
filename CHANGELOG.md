@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Dispatch command-client push events outside the reader through a bounded 256-frame queue, with
+  `DroppedPushCount` for overflow and isolated handler exceptions.
+
 ### Added
 
 - Fail-closed Linux descriptor measurements for concurrent recovery tests, with bounded procfs

@@ -22,9 +22,10 @@
                 lightweight callback and an EventArgs wrapper would add a public type for no gain.
         CA1008  ValkeyProtocol values mirror the wire numbers (Resp2 = 2, Resp3 = 3). A zero
                 'None' member would be meaningless and would break that mapping.
-        CA1031  ReadNonPushAsync deliberately swallows user push-callback exceptions so a caller
+        CA1031  DispatchPushesAsync deliberately swallows user push-callback exceptions so a caller
                 bug cannot desynchronize the wire. Connection-owner background attempts settle
                 shared tasks and observe abandoned failures instead of leaking unobserved tasks.
+                Cluster pool population does the same for shared node-connection reservations.
                 OwnerDiagnostics isolates instrument publication, sampling, measurement, and activity
                 listener exceptions so telemetry never replaces a command's result or failure.
         CA1032  Exception constructors are intentionally constrained: ValkeyServerException derives
