@@ -9,6 +9,7 @@
 - Bound and escape server-error exception previews; omit malformed RESP payloads from protocol errors.
 - Preserve successful command replies after a pipelined ASKING error; report ambiguous command errors
   without redirect or script-cache replay.
+- Recover scripts only for exact server NOSCRIPT cache-miss messages; never repeat an EVAL fallback.
 
 ### Added
 

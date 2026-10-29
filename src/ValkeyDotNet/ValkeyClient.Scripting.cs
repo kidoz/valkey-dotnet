@@ -59,9 +59,9 @@ public sealed partial class ValkeyClient
             return await SendScriptAttemptAsync(hashCommand, asking, timeout, startedAt, cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (ValkeyServerException exception) when (exception.ErrorCode == "NOSCRIPT")
+        catch (ValkeyServerException exception) when (IsScriptCacheMiss(exception))
         {
-            // NOSCRIPT is a complete rejection. Only this error permits cache recovery.
+            // Only the exact server cache-miss form permits recovery; scripts may return NOSCRIPT too.
         }
 
         var bucket = script.RecoveryBucket;
@@ -105,7 +105,7 @@ public sealed partial class ValkeyClient
                     )
                     .ConfigureAwait(false);
             }
-            catch (ValkeyServerException exception) when (exception.ErrorCode == "NOSCRIPT")
+            catch (ValkeyServerException exception) when (IsScriptCacheMiss(exception))
             {
                 return await SendScriptAttemptAsync(
                         script.WithSource(hashCommand),
@@ -153,6 +153,9 @@ public sealed partial class ValkeyClient
             );
         }
     }
+
+    private static bool IsScriptCacheMiss(ValkeyServerException exception) =>
+        exception.Message is "NOSCRIPT No matching script." or "NOSCRIPT No matching script. Please use EVAL.";
 
     private static TimeSpan RemainingScriptTimeout(TimeSpan timeout, long startedAt, bool previouslySent = false)
     {

@@ -41,10 +41,10 @@ public sealed class ValkeyScriptTests
                 for (var i = 0; i < callers; i++)
                     Assert.Equal("EVALSHA", (await session.ReadCommandAsync())[0]);
                 for (var i = 0; i < callers; i++)
-                    await session.SendAsync("-NOSCRIPT No matching script\r\n");
+                    await session.SendAsync("-NOSCRIPT No matching script.\r\n");
 
                 Assert.Equal("EVALSHA", (await session.ReadCommandAsync())[0]);
-                await session.SendAsync("-NOSCRIPT No matching script\r\n");
+                await session.SendAsync("-NOSCRIPT No matching script.\r\n");
                 var load = await session.ReadCommandAsync();
                 Assert.Equal("EVAL", load[0]);
                 Assert.Equal(source, load[1]);
@@ -91,6 +91,9 @@ public sealed class ValkeyScriptTests
     [Theory]
     [InlineData("ERR script failed")]
     [InlineData("NOPERM permission denied")]
+    [InlineData("NOSCRIPT script returned this error")]
+    [InlineData("NOSCRIPT No matching script. application suffix")]
+    [InlineData("NOSCRIPT")]
     public async Task OrdinaryScriptErrorsAreNotRetried(string error)
     {
         await using var server = FakeValkeyServer.Start(async session =>
@@ -115,6 +118,41 @@ public sealed class ValkeyScriptTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task LoadedScriptReturningNoscriptIsExecutedOnce(bool afterCacheMiss)
+    {
+        const string source = "redis.call('INCR', KEYS[1]); return redis.error_reply('NOSCRIPT application error')";
+        var executions = 0;
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            if (afterCacheMiss)
+            {
+                Assert.Equal("EVALSHA", (await session.ReadCommandAsync())[0]);
+                await session.SendAsync("-NOSCRIPT No matching script. Please use EVAL.\r\n");
+            }
+            Assert.Equal("EVALSHA", (await session.ReadCommandAsync())[0]);
+            executions++;
+            await session.SendAsync("-NOSCRIPT application error\r\n");
+            Assert.Equal(["PING"], await session.ReadCommandAsync());
+            await session.SendAsync("+PONG\r\n");
+        });
+        await using var client = await ValkeyClient.ConnectAsync(
+            server.ClientOptions(),
+            TestContext.Current.CancellationToken
+        );
+        var failure = await Assert.ThrowsAsync<ValkeyServerException>(() =>
+            client.ExecuteScriptAsync(new ValkeyScript(source), ["counter"], [], TestContext.Current.CancellationToken)
+        );
+        Assert.Equal("NOSCRIPT application error", failure.Message);
+        Assert.Equal("PONG", await client.PingAsync(TestContext.Current.CancellationToken));
+        await server.Session;
+        Assert.Equal(1, executions);
+        Assert.DoesNotContain(server.ReceivedCommands, command => command[0] == "EVAL");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task FallbackFailureIsNeverReplayed(bool disconnect)
     {
         await using var server = FakeValkeyServer.Start(async session =>
@@ -123,14 +161,14 @@ public sealed class ValkeyScriptTests
             for (var i = 0; i < 2; i++)
             {
                 Assert.Equal("EVALSHA", (await session.ReadCommandAsync())[0]);
-                await session.SendAsync("-NOSCRIPT Missing\r\n");
+                await session.SendAsync("-NOSCRIPT No matching script.\r\n");
             }
             Assert.Equal("EVAL", (await session.ReadCommandAsync())[0]);
             if (disconnect)
                 session.Close();
             else
             {
-                await session.SendAsync("-NOSCRIPT script returned this error\r\n");
+                await session.SendAsync("-NOSCRIPT No matching script.\r\n");
                 Assert.Equal(["PING"], await session.ReadCommandAsync());
                 await session.SendAsync("+PONG\r\n");
             }
@@ -170,7 +208,7 @@ public sealed class ValkeyScriptTests
             for (var i = 0; i < 2; i++)
             {
                 Assert.Equal("EVALSHA", (await session.ReadCommandAsync())[0]);
-                await session.SendAsync("-NOSCRIPT Missing\r\n");
+                await session.SendAsync("-NOSCRIPT No matching script.\r\n");
             }
             Assert.Equal("EVAL", (await session.ReadCommandAsync())[0]);
             written.SetResult();
@@ -215,12 +253,12 @@ public sealed class ValkeyScriptTests
             Assert.Equal("leader", (await session.ReadCommandAsync())[3]);
             Assert.Equal("follower", (await session.ReadCommandAsync())[3]);
             // Only the leader's initial error is sent until it demonstrably owns the recovery gate.
-            await session.SendAsync("-NOSCRIPT Missing\r\n");
+            await session.SendAsync("-NOSCRIPT No matching script.\r\n");
             Assert.Equal("leader", (await session.ReadCommandAsync())[3]);
-            await session.SendAsync("-NOSCRIPT Missing\r\n");
+            await session.SendAsync("-NOSCRIPT No matching script.\r\n");
             held.SetResult();
             await release.Task;
-            await session.SendAsync("-NOSCRIPT Missing\r\n");
+            await session.SendAsync("-NOSCRIPT No matching script.\r\n");
             var fallback = await session.ReadCommandAsync();
             Assert.Equal(["EVAL", "return ARGV[1]", "0", "leader"], fallback);
             await session.SendAsync("+leader\r\n");
@@ -263,7 +301,7 @@ public sealed class ValkeyScriptTests
             for (var i = 0; i < 2; i++)
             {
                 Assert.Equal("EVALSHA", (await session.ReadCommandAsync())[0]);
-                await session.SendAsync("-NOSCRIPT Missing\r\n");
+                await session.SendAsync("-NOSCRIPT No matching script.\r\n");
             }
             Assert.Equal("EVAL", (await session.ReadCommandAsync())[0]);
             written.SetResult();

@@ -26,7 +26,7 @@ public sealed class ValkeyClusterClientScriptTests
                 var command = await session.ReadCommandAsync();
                 Assert.Equal(attempt < 2 ? "EVALSHA" : "EVAL", command[0]);
                 Assert.Equal(["1", key, "result"], command[2..]);
-                await session.SendAsync(attempt < 2 ? "-NOSCRIPT Missing\r\n" : "+result\r\n");
+                await session.SendAsync(attempt < 2 ? "-NOSCRIPT No matching script.\r\n" : "+result\r\n");
             }
         });
         FakeValkeyServer? seedServer = null;
@@ -94,7 +94,7 @@ public sealed class ValkeyClusterClientScriptTests
                 for (var attempt = 0; attempt < 2; attempt++)
                 {
                     Assert.Equal("EVALSHA", (await session.ReadCommandAsync())[0]);
-                    await session.SendAsync("-NOSCRIPT Missing\r\n");
+                    await session.SendAsync("-NOSCRIPT No matching script.\r\n");
                 }
                 Assert.Equal("EVAL", (await session.ReadCommandAsync())[0]);
                 if (index == 0)

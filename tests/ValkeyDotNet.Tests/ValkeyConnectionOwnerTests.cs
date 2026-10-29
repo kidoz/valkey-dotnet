@@ -297,7 +297,7 @@ public sealed class ValkeyConnectionOwnerTests
                 for (var i = 0; i < 2; i++)
                 {
                     Assert.Equal("EVALSHA", (await session.ReadCommandAsync())[0]);
-                    await session.SendAsync("-NOSCRIPT missing\r\n");
+                    await session.SendAsync("-NOSCRIPT No matching script.\r\n");
                 }
                 Assert.Equal(["EVAL", "return ARGV[1]", "0", "value"], await session.ReadCommandAsync());
                 await session.SendAsync("+value\r\n");

@@ -32,15 +32,17 @@ the existing positional error behavior.
 
 ## Cache recovery
 
-The fast path sends one `EVALSHA`. Only a `NOSCRIPT` error enters recovery. A connection-owned gate
+The fast path sends one `EVALSHA`. Only the exact cache-miss messages `NOSCRIPT No matching script.`
+and `NOSCRIPT No matching script. Please use EVAL.` enter recovery. A connection-owned gate
 serializes recovery for that script, including independently constructed objects with identical
 source. The caller rechecks with `EVALSHA` inside the gate: another caller may already have loaded
-the script. If the recheck also returns `NOSCRIPT`, it falls back to `EVAL` once. A successful recheck
-is the result of that caller's invocation; it is never followed by another execution.
+the script. If the recheck also returns an exact cache-miss message, it falls back to `EVAL` once.
+A successful recheck is the result of that caller's invocation; it is never followed by another execution.
 
 Recovery therefore sends at most two `EVALSHA` attempts and one `EVAL` per node attempt. Runtime
 errors, permission errors, cancellation, timeouts, and transport failures are propagated. Even an
-`EVAL` fallback that returns `NOSCRIPT` is not repeated. Repeated external cache flushes can require
+`EVAL` fallback that returns an exact cache-miss message is not repeated. Other `NOSCRIPT` errors
+are application errors and never enter recovery. Repeated external cache flushes can require
 another caller to reload later; the client does not loop indefinitely trying to stabilize the cache.
 
 Coordination uses 16 lazily allocated semaphore stripes per physical connection, with no retained
@@ -69,6 +71,6 @@ report `MayHaveBeenSent`. Caller cancellation during I/O remains connection-fata
 
 Lua source is trusted application code; application data belongs in `KEYS` and `ARGV`, never in
 interpolated Lua. Every accessed database key must be declared in `KEYS`. Scripts must not fabricate
-reserved routing or cache errors (`MOVED`, `ASK`, `NOSCRIPT`) after performing writes: those errors
-instruct the driver to take another attempt. Ordinary runtime errors can follow partial script
+reserved routing errors (`MOVED`, `ASK`) or the exact server `NOSCRIPT` cache-miss text after performing
+writes: those errors instruct the driver to take another attempt. Ordinary runtime errors can follow partial script
 effects and do not make retry safe.
