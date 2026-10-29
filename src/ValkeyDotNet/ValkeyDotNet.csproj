@@ -2,7 +2,7 @@
     <PropertyGroup>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <PackageId>ValkeyDotNet</PackageId>
-        <Version>1.1.0</Version>
+        <Version>1.2.0</Version>
         <Description>A .NET client library for Valkey</Description>
         <Authors>Aleksandr Pavlov</Authors>
         <Copyright>Copyright (c) 2026 Aleksandr Pavlov</Copyright>
@@ -11,7 +11,7 @@
         <RepositoryType>git</RepositoryType>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageReadmeFile>README.md</PackageReadmeFile>
-        <PackageReleaseNotes>Adds a dedicated RESP2/RESP3 Pub/Sub subscriber with optional recovery, sharded Pub/Sub and a cluster subscriber, a standalone RESP3 client-tracking client, a bounded standalone connection owner, structured Lua scripting, isolated per-operation deadlines with explicit delivery status, opt-in owner telemetry, and lower bulk-reply parsing allocations.</PackageReleaseNotes>
+        <PackageReleaseNotes>Improves connection integrity and resilience: push notifications dispatch through a bounded background queue with DroppedPushCount, server-error and protocol diagnostics are bounded and sanitized, runtime session-changing commands are rejected on shared connections, cluster node connects reserve capacity and no longer inherit caller cancellation or deadlines, ambiguous ASKING failures surface as ValkeyAskingException without replay while keeping the connection usable, and script recovery runs only for exact NOSCRIPT cache-miss messages.</PackageReleaseNotes>
         <PackageTags>valkey;redis;resp;cache;database</PackageTags>
         <!--
       Suppressions for AnalysisLevel=latest-all. Each is a deliberate design decision;

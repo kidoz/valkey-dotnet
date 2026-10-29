@@ -18,7 +18,7 @@ with RESP2, RESP3, TLS, pipelining, and cluster routing.
 
 ## Status
 
-ValkeyDotNet 1.1.0 is a stable release for standalone Valkey and primary-routed Valkey
+ValkeyDotNet 1.2.0 is a stable release for standalone Valkey and primary-routed Valkey
 Cluster workloads. Supported features are implemented and tested; unsupported behavior fails
 explicitly. See the [changelog](CHANGELOG.md) for release notes.
 
@@ -47,7 +47,7 @@ Implemented:
   explicit retry authorization, structured Lua scripting, and isolated per-operation deadlines
 - Opt-in owner [metrics and tracing](docs/reference/diagnostics.md), free of command or payload capture
 
-Not included in 1.1.0: replica reads, cluster-wide scans, Sentinel discovery, and general-purpose
+Not included in 1.2.0: replica reads, cluster-wide scans, Sentinel discovery, and general-purpose
 pooling. See
 [the connection model](docs/explanation/connection-model.md) for why, and
 [why managed-only](docs/explanation/why-managed-only.md) for the positioning.
@@ -62,7 +62,7 @@ pooling. See
 ## Installation
 
 ```xml
-<PackageReference Include="ValkeyDotNet" Version="1.1.0" />
+<PackageReference Include="ValkeyDotNet" Version="1.2.0" />
 ```
 
 ## Documentation
