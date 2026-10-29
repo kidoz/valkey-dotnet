@@ -7,6 +7,7 @@
 - Dispatch command-client push events outside the reader through a bounded 256-frame queue, with
   `DroppedPushCount` for overflow and isolated handler exceptions.
 - Bound and escape server-error exception previews; omit malformed RESP payloads from protocol errors.
+- Reject runtime AUTH, SELECT, READONLY, READWRITE, and raw ASKING on shared command connections.
 - Preserve successful command replies after a pipelined ASKING error; report ambiguous command errors
   without redirect or script-cache replay.
 - Recover scripts only for exact server NOSCRIPT cache-miss messages; never repeat an EVAL fallback.

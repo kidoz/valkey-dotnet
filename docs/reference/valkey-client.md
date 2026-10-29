@@ -91,11 +91,13 @@ is still drained even when the caller's deadline has expired.
 ## Commands the client refuses
 
 `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `MONITOR`,
-`RESET`, `HELLO`, and `CLIENT REPLY` are rejected with `ValkeyUnsupportedCommandException` before
+`RESET`, `HELLO`, `AUTH`, `SELECT`, `READONLY`, `READWRITE`, `ASKING`, and `CLIENT REPLY` are rejected with `ValkeyUnsupportedCommandException` before
 they reach the wire. Each of them would redefine the connection — its protocol, its database, its
 authenticated user, or whether replies arrive at all — behind a client that assumes none of that
 changes. Rejecting them leaves the connection usable; sending them would not. See
-[Exceptions](exceptions.md) for the per-command reasoning.
+[Exceptions](exceptions.md) for the per-command reasoning. Authentication and database selection are
+configured through `ValkeyClientOptions` at connect time. Only the cluster router emits `ASKING`,
+paired with its redirected command in one contiguous write.
 
 ## Convenience methods
 

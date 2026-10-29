@@ -177,6 +177,7 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
     )
     {
         ArgumentNullException.ThrowIfNull(command);
+        ValkeyClient.EnsureCommandSupported(command);
         ThrowIfDisposed();
         var startedAt = Stopwatch.GetTimestamp();
 
@@ -306,6 +307,10 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
         if (commandList.Any(static command => command is null))
             throw new ArgumentException("A cluster pipeline cannot contain a null command.", nameof(commands));
 
+        foreach (var command in commandList)
+        {
+            ValkeyClient.EnsureCommandSupported(command.Command);
+        }
         var slotMap = Volatile.Read(ref _slots);
         var groups = new Dictionary<ClusterEndpoint, List<PipelineItem>>();
         for (var index = 0; index < commandList.Length; index++)

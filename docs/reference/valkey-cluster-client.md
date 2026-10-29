@@ -73,6 +73,7 @@ Both pipelined replies are consumed. The redirected command's successful reply i
 `ASKING` returned an error. If both replies are errors, `ValkeyConnectionException` reports
 `MayHaveBeenSent` and carries the command error as its inner exception; no redirect or script-cache
 recovery follows that result. Missing replies retain the transport/deadline ambiguity rules.
+Session-changing commands are rejected as on [`ValkeyClient`](valkey-client.md).
 
 Redirect endpoints with an empty host reuse the current host, and IPv6 endpoints are split at the
 last colon. A redirect reporting a slot different from the routing key is rejected. Malformed

@@ -93,7 +93,8 @@ endpoint, never credentials or server response text.
 
 Every replacement reapplies TLS validation, ACL credentials, requested protocol, database, client
 name, connect/drain timeouts, parser bounds, and pending-request limits through `Connection`.
-Runtime session mutations are not restored: for example, `SELECT`, `CLIENT SETNAME`, transactions,
+Runtime `AUTH`, `SELECT`, `READONLY`, `READWRITE`, and `ASKING` are rejected on command connections.
+Other session state is not restored: for example, `CLIENT SETNAME`, transactions,
 and tracking established by generic commands do not become owner configuration. Multi-call
 connection-affine protocols require a dedicated physical client. No physical-client lease, push
 callback forwarding, subscriber lifecycle, general-purpose pool, or cluster routing is exposed here.

@@ -390,6 +390,11 @@ public sealed class ValkeyClientTests
     [InlineData("MONITOR")]
     [InlineData("RESET")]
     [InlineData("HELLO")]
+    [InlineData("AUTH")]
+    [InlineData("SELECT")]
+    [InlineData("READONLY")]
+    [InlineData("READWRITE")]
+    [InlineData("ASKING")]
     public async Task ExecuteAsyncRejectsConnectionStateCommandsBeforeWriting(string name)
     {
         await using var server = FakeValkeyServer.Start(async session =>
@@ -442,8 +447,14 @@ public sealed class ValkeyClientTests
         Assert.Equal("OK", setname.AsString());
     }
 
-    [Fact]
-    public async Task ExecutePipelineAsyncRejectsConnectionStateCommandsBeforeWriting()
+    [Theory]
+    [InlineData("SUBSCRIBE")]
+    [InlineData("AUTH")]
+    [InlineData("SELECT")]
+    [InlineData("READONLY")]
+    [InlineData("READWRITE")]
+    [InlineData("ASKING")]
+    public async Task ExecutePipelineAsyncRejectsConnectionStateCommandsBeforeWriting(string name)
     {
         await using var server = FakeValkeyServer.Start(async session =>
         {
@@ -457,7 +468,7 @@ public sealed class ValkeyClientTests
 
         await Assert.ThrowsAsync<ValkeyUnsupportedCommandException>(async () =>
             await client.ExecutePipelineAsync(
-                [new ValkeyCommand("GET", "a"), new ValkeyCommand("SUBSCRIBE", "news")],
+                [new ValkeyCommand("GET", "a"), new ValkeyCommand(name, "news")],
                 TestContext.Current.CancellationToken
             )
         );

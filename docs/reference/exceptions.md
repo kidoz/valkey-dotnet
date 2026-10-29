@@ -132,6 +132,9 @@ unsupported.
 | `MONITOR` | Turns the connection into an unsolicited stream of server events. |
 | `RESET` | Discards the protocol, database, and authentication state `ConnectAsync` established. |
 | `HELLO` | The handshake belongs to `ConnectAsync`. Re-running it would silently change the protocol while `NegotiatedProtocol` kept reporting the old one. |
+| `AUTH`, `SELECT` | Identity and database selection are fixed by `ConnectAsync` options for every caller sharing the socket. |
+| `READONLY`, `READWRITE` | The shared cluster connection's primary routing mode cannot be changed by an individual caller. |
+| `ASKING` | Only the cluster router can pair this one-shot state with its intended command. |
 | `CLIENT REPLY` | `OFF` and `SKIP` suppress replies, leaving the reader waiting for a frame that never arrives. |
 
 Nothing reached the wire, so the connection is untouched and still usable — including for other

@@ -662,6 +662,45 @@ public sealed class ValkeyClusterClientTests
         Assert.Single(target.ReceivedCommands, command => command[0] == "INCR");
     }
 
+    [Theory]
+    [InlineData("AUTH")]
+    [InlineData("SELECT")]
+    [InlineData("READONLY")]
+    [InlineData("READWRITE")]
+    [InlineData("ASKING")]
+    public async Task ClusterRejectsSessionChangesBeforeAnyPipelineGroupIsWritten(string name)
+    {
+        FakeValkeyServer? seedServer = null;
+        seedServer = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.SendAsync(ShardsTopology(seedServer!.Port));
+            Assert.Equal(["PING"], await session.ReadCommandAsync());
+            await session.SendAsync("+PONG\r\n");
+        });
+        await using var seed = seedServer;
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            Options(seed.Port),
+            TestContext.Current.CancellationToken
+        );
+        await Assert.ThrowsAsync<ValkeyUnsupportedCommandException>(() =>
+            cluster.ExecuteAsync("key", new ValkeyCommand(name), TestContext.Current.CancellationToken)
+        );
+        await Assert.ThrowsAsync<ValkeyUnsupportedCommandException>(() =>
+            cluster.ExecutePipelineAsync(
+                [
+                    new ValkeyClusterCommand("key", new ValkeyCommand("INCR", "key")),
+                    new ValkeyClusterCommand("key", new ValkeyCommand(name)),
+                ],
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.Equal("PONG", await cluster.PingAsync(TestContext.Current.CancellationToken));
+        await seed.Session;
+        Assert.DoesNotContain(seed.ReceivedCommands, command => command[0] is "INCR" || command[0] == name);
+    }
+
     private static ValkeyClusterOptions Options(int seedPort) =>
         new()
         {

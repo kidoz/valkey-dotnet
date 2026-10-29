@@ -33,6 +33,11 @@ public sealed partial class ValkeyClient : IAsyncDisposable
             "MONITOR",
             "RESET",
             "HELLO",
+            "AUTH",
+            "SELECT",
+            "READONLY",
+            "READWRITE",
+            "ASKING",
         ],
         StringComparer.Ordinal
     );
@@ -472,6 +477,11 @@ public sealed partial class ValkeyClient : IAsyncDisposable
         {
             TrackingSession.EnsureSupported(command);
         }
+        EnsureCommandSupported(command);
+    }
+
+    internal static void EnsureCommandSupported(ValkeyCommand command)
+    {
         if (ConnectionStateCommands.Contains(command.Name))
             throw new ValkeyUnsupportedCommandException(command.Name, ExplainRejection(command.Name));
         if (IsClientReply(command))
@@ -488,6 +498,9 @@ public sealed partial class ValkeyClient : IAsyncDisposable
         {
             "HELLO" => "the handshake belongs to ConnectAsync, and re-running it would leave "
                 + $"{nameof(NegotiatedProtocol)}, the selected database, and the authenticated user misreported",
+            "AUTH" or "SELECT" => "authentication and database selection belong to ConnectAsync",
+            "READONLY" or "READWRITE" => "routing mode is fixed on shared primary connections",
+            "ASKING" => "the cluster router owns ASKING and pairs it with its redirected command",
             "RESET" => "it discards the protocol, database, and authentication state established by ConnectAsync",
             "MONITOR" => "it turns the connection into an unsolicited stream of server events",
             "CLIENT REPLY" => "OFF and SKIP suppress replies, leaving the reader waiting for a frame "
