@@ -305,6 +305,41 @@ public sealed class RespReaderTests
         Assert.Equal("PONG", value.AsString());
     }
 
+    [Theory]
+    [InlineData(":")]
+    [InlineData("#")]
+    [InlineData(",")]
+    [InlineData("(")]
+    [InlineData("$")]
+    public async Task MalformedScalarDiagnosticsDoNotCopyLargePayloads(string prefix)
+    {
+        var reader = Reader(prefix + new string('x', 2 * 1024 * 1024) + "\r\n", maxResponseBytes: 4 * 1024 * 1024);
+        var failure = await Assert.ThrowsAsync<ValkeyProtocolException>(async () =>
+            await reader.ReadAsync(TestContext.Current.CancellationToken)
+        );
+        Assert.True(failure.Message.Length < 128);
+        Assert.DoesNotContain(new string('x', 64), failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ServerErrorDiagnosticsAreBoundedAndEscapeControls(bool blob, bool controls)
+    {
+        var payload = "ERR " + new string(controls ? '\u0001' : 'x', 2 * 1024 * 1024);
+        var wire = blob ? $"!{payload.Length}\r\n{payload}\r\n" : $"-{payload}\r\n";
+        var reader = Reader(wire, maxResponseBytes: 4 * 1024 * 1024);
+        var response = await reader.ReadAsync(TestContext.Current.CancellationToken);
+        var failure = Assert.Throws<ValkeyServerException>(response.ThrowIfError);
+        Assert.Equal("ERR", failure.ErrorCode);
+        Assert.InRange(failure.Message.Length, 1, 2100);
+        Assert.DoesNotContain('\u0001', failure.Message);
+        Assert.Contains("bytes)", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(payload.Length, response.AsBytes().Length);
+    }
+
     private static RespReader Reader(
         string value,
         int maxResponseBytes = 1024 * 1024,

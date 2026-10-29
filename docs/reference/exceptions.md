@@ -56,7 +56,11 @@ opening a new client.
 
 The server returned a RESP error reply. Carries `ErrorCode`, the leading token of the message up to
 the first space — `WRONGTYPE`, `NOAUTH`, `ERR`, `MOVED`, and so on. When the message has no space,
-`ErrorCode` is the whole message.
+`ErrorCode` is the whole message. Server-derived exception messages contain a bounded preview:
+at most 2,048 UTF-8 input bytes and approximately 2,048 rendered characters, followed by a byte count
+when truncated. Controls are escaped. Protocol syntax errors report a fixed category and length,
+without embedding the malformed token. The full error remains available through `RespValue.AsBytes()`
+on positional pipeline replies.
 
 ```csharp
 try

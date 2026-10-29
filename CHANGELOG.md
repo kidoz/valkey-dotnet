@@ -6,6 +6,7 @@
 
 - Dispatch command-client push events outside the reader through a bounded 256-frame queue, with
   `DroppedPushCount` for overflow and isolated handler exceptions.
+- Bound and escape server-error exception previews; omit malformed RESP payloads from protocol errors.
 
 ### Added
 

@@ -92,7 +92,33 @@ public sealed class RespValue
     {
         if (Type is not (RespType.SimpleError or RespType.BlobError))
             throw WrongType("an error");
-        return new ValkeyServerException(AsString()!);
+        const int maxPreviewBytes = 2048;
+        var bytes = AsBytes().Span;
+        var shown = Math.Min(bytes.Length, maxPreviewBytes);
+        var text = Encoding.UTF8.GetString(bytes[..shown]);
+        var builder = new StringBuilder();
+        var consumed = 0;
+        foreach (var character in text)
+        {
+            if (builder.Length + 6 > maxPreviewBytes)
+            {
+                break;
+            }
+            consumed++;
+            if (char.IsControl(character) || character is '\u2028' or '\u2029')
+            {
+                AppendEscaped(builder, character);
+            }
+            else
+            {
+                builder.Append(character);
+            }
+        }
+        if (shown < bytes.Length || consumed < text.Length)
+        {
+            builder.Append("… (").Append(bytes.Length).Append(" bytes)");
+        }
+        return new ValkeyServerException(builder.ToString());
     }
 
     public void ThrowIfError()

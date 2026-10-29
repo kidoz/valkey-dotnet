@@ -274,14 +274,14 @@ internal sealed class RespReader
         {
             "t" => RespValue.Boolean(true),
             "f" => RespValue.Boolean(false),
-            _ => throw new ValkeyProtocolException($"Invalid RESP3 boolean '{text}'."),
+            _ => throw new ValkeyProtocolException($"Invalid RESP3 boolean ({text.Length} bytes)."),
         };
     }
 
     private static RespValue ReadBigNumber(string text)
     {
         if (!BigInteger.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _))
-            throw new ValkeyProtocolException($"Invalid RESP3 big number '{text}'.");
+            throw new ValkeyProtocolException($"Invalid RESP3 big number ({text.Length} bytes).");
         return RespValue.Bytes(RespType.BigNumber, Encoding.ASCII.GetBytes(text));
     }
 
@@ -292,13 +292,13 @@ internal sealed class RespReader
             "-inf" => double.NegativeInfinity,
             "nan" => double.NaN,
             _ when double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) => value,
-            _ => throw new ValkeyProtocolException($"Invalid RESP3 double '{text}'."),
+            _ => throw new ValkeyProtocolException($"Invalid RESP3 double ({text.Length} bytes)."),
         };
 
     private static long ParseInt64(string text, string kind) =>
         long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var value)
             ? value
-            : throw new ValkeyProtocolException($"Invalid RESP {kind} '{text}'.");
+            : throw new ValkeyProtocolException($"Invalid RESP {kind} ({text.Length} bytes).");
 
     /// <summary>
     /// Parses a declared length or cardinality. Only RESP2 null bulk strings and null arrays may use
@@ -308,9 +308,9 @@ internal sealed class RespReader
     {
         var value = ParseInt64(text, "length");
         if (value < -1 || value > int.MaxValue)
-            throw new ValkeyProtocolException($"RESP length '{text}' is outside the supported range.");
+            throw new ValkeyProtocolException("RESP length is outside the supported range.");
         if (value < 0 && !nullable)
-            throw new ValkeyProtocolException($"A RESP {type} cannot declare the null length '{text}'.");
+            throw new ValkeyProtocolException($"A RESP {type} cannot declare a null length.");
         return (int)value;
     }
 
@@ -318,7 +318,7 @@ internal sealed class RespReader
     {
         var value = ParseInt64(text, "length");
         if (value < 0 || value > int.MaxValue)
-            throw new ValkeyProtocolException($"A streamed chunk length '{text}' is outside the supported range.");
+            throw new ValkeyProtocolException("A streamed chunk length is outside the supported range.");
         return (int)value;
     }
 
