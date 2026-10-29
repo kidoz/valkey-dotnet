@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Align public feature availability, subscription recovery evidence, and rejected command lists with 1.1.0.
 - Lock project NuGet dependency graphs and enforce locked restores in CI and release workflows.
 
 - Keep synchronized node connections and pending neighbors usable after ambiguous ASKING errors;

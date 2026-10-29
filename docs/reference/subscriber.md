@@ -1,6 +1,6 @@
 # Dedicated subscriber
 
-Available in the unreleased development version. `ValkeySubscriber` owns a separate connection for
+Available since 1.1.0. `ValkeySubscriber` owns a separate connection for
 RESP2/RESP3 `SUBSCRIBE`, `PSUBSCRIBE`, and their unsubscribe operations. Ordinary `ValkeyClient`
 connections still reject subscription-mode commands. Publishing uses the ordinary binary-safe
 generic command API.

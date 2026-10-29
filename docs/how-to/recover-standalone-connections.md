@@ -1,7 +1,7 @@
 # Recover a standalone connection
 
-Use `ValkeyConnectionOwner` from the development version when a long-lived standalone client must
-replace failed sockets. It is not included in the published 1.0.0 package yet.
+Use `ValkeyConnectionOwner` (available since 1.1.0) when a long-lived standalone client must
+replace failed sockets.
 
 Keep one owner for a workload and dispose it when that workload stops:
 

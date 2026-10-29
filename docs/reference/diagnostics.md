@@ -1,6 +1,6 @@
 # Connection-owner diagnostics
 
-Available in the unreleased development version. `ValkeyConnectionOwnerOptions.EnableTelemetry`
+Available since 1.1.0. `ValkeyConnectionOwnerOptions.EnableTelemetry`
 defaults to `false`. Enabling it opts that owner into process-wide BCL metrics and listener-selected
 activities. The shipping package has no telemetry SDK, exporter, dependency, background export
 task, or telemetry queue.

@@ -78,7 +78,10 @@ into subscriber mode and — on RESP3 — answers with a push frame rather than 
 client that skips pushes while waiting for a reply waits forever. `RESET` throws away the protocol,
 database, and authentication the handshake established. `HELLO` renegotiates the protocol under a
 client that already recorded it. `CLIENT REPLY OFF` stops replies arriving at all. `MONITOR` replaces
-replies with a stream of server events.
+replies with a stream of server events. Runtime `AUTH` and `SELECT` would change every caller's user
+or database, while `READONLY` and `READWRITE` would change the socket's routing mode. Raw `ASKING`
+would arm a one-shot state for whichever caller writes next; only the cluster router pairs it with
+the intended command.
 
 Each of those breaks the same assumption everything above rests on: that the *n*-th reply answers the
 *n*-th command, on a connection whose protocol and identity are fixed at connect time.
@@ -88,7 +91,7 @@ instead, before writing a byte, so the failure is immediate, named, and costs no
 connection is untouched and still works. That is what "unsupported behavior fails explicitly" means
 here: not a comment in the docs, a rejection at the call site.
 
-The unreleased `ValkeySubscriber` supplies a separate background reader and acknowledgement state
+`ValkeySubscriber`, available since 1.1.0, supplies a separate background reader and acknowledgement state
 machine for Pub/Sub. It never changes an ordinary command connection into a subscriber. Its bounded
 async streams keep application handlers off the socket reader; see the
 [subscriber reference](../reference/subscriber.md).
@@ -139,8 +142,10 @@ of confirmed channel/pattern or shard subscriptions on the same endpoint. Tracki
 use a separate client. The cluster subscriber adds slot-routed sharded primitives with dedicated
 sockets and opt-in topology recovery through the existing subscriber reader and bounded queue.
 Validated server shard removal or transport loss can refresh discovery and relocate the stream;
-malformed frames remain terminal. Live migration/failover and soak evidence remain outstanding. See the
-[sharded Pub/Sub contract](../reference/cluster-subscriber.md).
+malformed frames remain terminal. Recorded Valkey 9.1.2 runs cover slot migration, primary failover,
+and a bounded sequential resubscription soak. They do not establish hours-long soak, live TLS recovery,
+or cross-version fault coverage. See the [sharded Pub/Sub contract](../reference/cluster-subscriber.md)
+and the [execution records](../reference/resilience-evidence.md).
 
 The generic command API means none of that blocks day-to-day use. Scripting via `EVAL` covers the
 atomicity cases that would otherwise need a held connection.

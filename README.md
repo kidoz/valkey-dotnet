@@ -40,14 +40,15 @@ Implemented:
 - Configurable bounded connections per cluster node for head-of-line isolation
 - A [dedicated Pub/Sub subscriber](docs/reference/subscriber.md) with bounded binary message streams
   and opt-in subscription restoration, plus [sharded Pub/Sub and a cluster subscriber](docs/reference/cluster-subscriber.md)
+  with opt-in subscription relocation during slot migration and primary failover
 - [RESP3 client tracking](docs/reference/client-tracking.md) with binary invalidations, NOLOOP, and
   BCAST/PREFIX
 - A [standalone connection owner](docs/reference/connection-owner.md) with bounded recovery and
   explicit retry authorization, structured Lua scripting, and isolated per-operation deadlines
 - Opt-in owner [metrics and tracing](docs/reference/diagnostics.md), free of command or payload capture
 
-Not included in 1.1.0: replica reads, cluster-wide scans, Sentinel discovery, general-purpose
-pooling, and automatic subscription relocation during slot migration. See
+Not included in 1.1.0: replica reads, cluster-wide scans, Sentinel discovery, and general-purpose
+pooling. See
 [the connection model](docs/explanation/connection-model.md) for why, and
 [why managed-only](docs/explanation/why-managed-only.md) for the positioning.
 

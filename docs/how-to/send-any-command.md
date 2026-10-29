@@ -108,7 +108,9 @@ catch (ValkeyUnsupportedCommandException exception)
 ```
 
 The list is `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `SSUBSCRIBE`, `SUNSUBSCRIBE`,
-`MONITOR`, `RESET`, `HELLO`, and `CLIENT REPLY`. Other `CLIENT` subcommands — `CLIENT SETNAME`,
+`MONITOR`, `RESET`, `HELLO`, `AUTH`, `SELECT`, `READONLY`, `READWRITE`, `ASKING`, and `CLIENT REPLY`.
+Set authentication and database through `ValkeyClientOptions` when connecting. The cluster router
+owns `ASKING` and pairs it with its redirected command. Other `CLIENT` subcommands — `CLIENT SETNAME`,
 `CLIENT INFO`, `CLIENT LIST` — work normally. See [Exceptions](../reference/exceptions.md) for why
 each one is on the list, and [Connection model](../explanation/connection-model.md) for the
 underlying reason.

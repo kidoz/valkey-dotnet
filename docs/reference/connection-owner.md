@@ -2,7 +2,7 @@
 
 `ValkeyConnectionOwner` owns one current `ValkeyClient` and replaces terminal connections on demand.
 It is a separate lifecycle layer: `ValkeyClient` itself remains one terminal physical connection.
-This API is available in the unreleased development version, not the published 1.0.0 package.
+This API is available since 1.1.0.
 
 ## Operations
 
