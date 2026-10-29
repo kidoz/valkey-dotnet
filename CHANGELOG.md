@@ -6,6 +6,7 @@
 
 - Keep synchronized node connections and pending neighbors usable after ambiguous ASKING errors;
   `ValkeyAskingException` preserves delivery ambiguity without reporting a transport failure.
+- Isolate shared cluster node connects from individual callers' cancellation and deadlines.
 
 - Dispatch command-client push events outside the reader through a bounded 256-frame queue, with
   `DroppedPushCount` for overflow and isolated handler exceptions.

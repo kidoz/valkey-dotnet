@@ -751,6 +751,72 @@ public sealed class ValkeyClusterClientTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FounderCancellationOrDeadlineDoesNotCancelSharedNodeConnect(bool deadline)
+    {
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseHandshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var target = FakeValkeyServer.Start(async session =>
+        {
+            Assert.Equal("HELLO", (await session.ReadCommandAsync())[0]);
+            connecting.TrySetResult();
+            await releaseHandshake.Task;
+            await session.SendAsync(FakeValkeyServer.HelloResp3);
+            Assert.Equal(["GET", "joiner"], await session.ReadCommandAsync());
+            await session.SendAsync("+joined\r\n");
+        });
+        await using var seed = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.SendAsync(ShardsTopology(target.Port));
+            await session.ReadCommandAsync();
+        });
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            new ValkeyClusterOptions { SeedNodes = [seed.ClientOptions()], MaxNodeConnections = 2 },
+            TestContext.Current.CancellationToken
+        );
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var founder = deadline
+            ? cluster.ExecuteWithDeadlineAsync(
+                "founder",
+                new ValkeyCommand("GET", "founder"),
+                TimeSpan.FromMilliseconds(500),
+                cancellation.Token
+            )
+            : cluster.ExecuteAsync("founder", new ValkeyCommand("GET", "founder"), cancellation.Token);
+        try
+        {
+            await connecting.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            var joiner = cluster.GetStringAsync("joiner", TestContext.Current.CancellationToken);
+            Assert.False(joiner.IsCompleted);
+            if (deadline)
+            {
+                var failure = await Assert.ThrowsAsync<ValkeyCommandTimeoutException>(() => founder);
+                Assert.Equal(ValkeyCommandDeliveryStatus.NotSent, failure.DeliveryStatus);
+            }
+            else
+            {
+                await cancellation.CancelAsync();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => founder);
+            }
+            releaseHandshake.TrySetResult();
+            Assert.Equal(
+                "joined",
+                await joiner.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken)
+            );
+            await target.Session;
+            Assert.Single(target.ReceivedCommands, command => command[0] == "HELLO");
+            Assert.DoesNotContain(target.ReceivedCommands, command => command[0] == "GET" && command[1] == "founder");
+        }
+        finally
+        {
+            releaseHandshake.TrySetResult();
+        }
+    }
+
     [Fact]
     public async Task SlowNodeConnectDoesNotBlockOtherRoutesOrTopologyRefresh()
     {

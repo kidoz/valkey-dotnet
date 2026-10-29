@@ -595,7 +595,7 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
             }
             if (missing > 0)
             {
-                _ = PopulatePoolAsync(endpoint, pool, missing, connecting, cancellationToken);
+                _ = PopulatePoolAsync(endpoint, pool, missing, connecting);
             }
             await connecting.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -605,22 +605,20 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
         ClusterEndpoint endpoint,
         NodePool pool,
         int reserved,
-        TaskCompletionSource completion,
-        CancellationToken cancellationToken
+        TaskCompletionSource completion
     )
     {
         var clients = new List<ValkeyClient>(reserved);
         Exception? failure = null;
         try
         {
-            using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken,
-                _connectionShutdown.Token
-            );
+            // Each caller cancels only its wait. Shared network work belongs to the cluster lifetime.
             for (var i = 0; i < reserved; i++)
             {
                 clients.Add(
-                    await ValkeyClient.ConnectAsync(CreateNodeOptions(endpoint), shutdown.Token).ConfigureAwait(false)
+                    await ValkeyClient
+                        .ConnectAsync(CreateNodeOptions(endpoint), _connectionShutdown.Token)
+                        .ConfigureAwait(false)
                 );
             }
         }

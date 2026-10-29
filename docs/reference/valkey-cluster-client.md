@@ -48,7 +48,9 @@ Idempotent. Closes every node connection opened by the cluster client.
 At least one seed is required. Every seed is validated before networking begins. Lazy node connections
 reserve capacity before connecting outside the shared pool lock. Calls to the same node share its
 pending acquisition; another node's connect does not block existing routes or topology refresh.
-Failed attempts release their reservations and sockets. Disposal cancels and joins pending connects.
+Each caller's cancellation or deadline ends only its own acquisition wait. Shared connects use the
+cluster lifetime token and the configured `ConnectTimeout`, and can complete even if every waiter
+has left. Failed attempts release their reservations and sockets. Disposal cancels and joins pending connects.
 
 ## Routing
 
