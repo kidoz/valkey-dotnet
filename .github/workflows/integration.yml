@@ -53,7 +53,7 @@ jobs:
           global-json-file: global.json
 
       - name: Restore packages
-        run: dotnet restore ValkeyDotNet.slnx
+        run: dotnet restore ValkeyDotNet.slnx --locked-mode
 
       - name: Build
         run: dotnet build ValkeyDotNet.slnx --configuration Release --no-restore
@@ -108,7 +108,7 @@ jobs:
           global-json-file: global.json
 
       - name: Restore packages
-        run: dotnet restore ValkeyDotNet.slnx
+        run: dotnet restore ValkeyDotNet.slnx --locked-mode
 
       - name: Build
         run: dotnet build ValkeyDotNet.slnx --configuration Release --no-restore

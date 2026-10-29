@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Lock project NuGet dependency graphs and enforce locked restores in CI and release workflows.
+
 - Keep synchronized node connections and pending neighbors usable after ambiguous ASKING errors;
   `ValkeyAskingException` preserves delivery ambiguity without reporting a transport failure.
 - Isolate shared cluster node connects from individual callers' cancellation and deadlines.

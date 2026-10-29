@@ -6,5 +6,9 @@
         <Nullable>enable</Nullable>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <AnalysisLevel>latest-all</AnalysisLevel>
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+        <!-- Cover explicit restores and implicit restores from build/run/pack in CI. -->
+        <RestoreLockedMode Condition="'$(CI)' == 'true' or '$(ContinuousIntegrationBuild)' == 'true'"
+            >true</RestoreLockedMode>
     </PropertyGroup>
 </Project>

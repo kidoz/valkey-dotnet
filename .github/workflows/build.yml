@@ -38,7 +38,7 @@ jobs:
         run: dotnet tool restore
 
       - name: Restore packages
-        run: dotnet restore ValkeyDotNet.slnx
+        run: dotnet restore ValkeyDotNet.slnx --locked-mode
 
       - name: Check formatting
         run: dotnet csharpier check .

@@ -25,6 +25,7 @@ long-lived `NUGET_API_KEY` for this workflow.
 4. Run the complete local release gate:
 
    ```bash
+   dotnet restore ValkeyDotNet.slnx --locked-mode
    just ci
    just test-matrix
    just test-cluster
@@ -34,6 +35,29 @@ long-lived `NUGET_API_KEY` for this workflow.
    ```
 
 5. Commit and push the prepared release to `main`.
+
+## Update dependency locks
+
+Project `packages.lock.json` files record the direct and transitive NuGet dependencies. Explicit
+workflow restores use `--locked-mode`; the shared build properties also enable locked mode whenever
+`CI=true` or `ContinuousIntegrationBuild=true`, including implicit restores.
+
+When intentionally updating dependencies, edit `Directory.Packages.props`, then run locally:
+
+```bash
+dotnet restore ValkeyDotNet.slnx --force-evaluate
+```
+
+Review the changed package versions and content hashes in every affected lock file, include those
+files with the dependency change, then verify:
+
+```bash
+dotnet restore ValkeyDotNet.slnx --locked-mode
+just ci
+```
+
+NuGet documents the behavior in [locking dependencies](https://learn.microsoft.com/en-us/nuget/consume-packages/package-references-in-project-files#locking-dependencies).
+Lock files constrain project package restores; local .NET tools use their separate pinned manifest.
 
 ## Exercise the workflow without publishing
 
