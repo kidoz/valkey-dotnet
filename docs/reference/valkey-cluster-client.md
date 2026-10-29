@@ -69,6 +69,11 @@ errors are propagated as `ValkeyServerException`.
 
 `MOVED` redirects update the reported slot assignment before retrying. `ASK` redirects do not update
 the slot map; the client pipelines `ASKING` and the redirected command on the same node connection.
+Both pipelined replies are consumed. The redirected command's successful reply is returned even if
+`ASKING` returned an error. If both replies are errors, `ValkeyConnectionException` reports
+`MayHaveBeenSent` and carries the command error as its inner exception; no redirect or script-cache
+recovery follows that result. Missing replies retain the transport/deadline ambiguity rules.
+
 Redirect endpoints with an empty host reuse the current host, and IPv6 endpoints are split at the
 last colon. A redirect reporting a slot different from the routing key is rejected. Malformed
 redirects throw `ValkeyClusterException`.

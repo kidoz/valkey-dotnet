@@ -606,6 +606,62 @@ public sealed class ValkeyClusterClientTests
         );
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task FailedAskingSurfacesTheFollowingCommandResult(bool pipeline, bool commandError)
+    {
+        const string key = "{asking}:write";
+        var slot = ValkeyClusterClient.GetHashSlot(key);
+        var command = new ValkeyCommand("INCR", key);
+        await using var target = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            Assert.Equal(["ASKING"], await session.ReadCommandAsync());
+            Assert.Equal(["INCR", key], await session.ReadCommandAsync());
+            // A NOSCRIPT/redirect-shaped error must not authorize another invocation after ASKING failed.
+            await session.SendAsync(
+                "-ERR ASKING refused\r\n" + (commandError ? "-NOSCRIPT No matching script.\r\n" : ":1\r\n")
+            );
+        });
+        FakeValkeyServer? seedServer = null;
+        seedServer = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await SendFallbackTopologyAsync(session, Topology(seedServer!.Port));
+            Assert.Equal(["INCR", key], await session.ReadCommandAsync());
+            await session.SendAsync($"-ASK {slot} 127.0.0.1:{target.Port}\r\n");
+        });
+        await using var seed = seedServer;
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            Options(seed.Port),
+            TestContext.Current.CancellationToken
+        );
+        async Task<RespValue> ExecuteAsync() =>
+            pipeline
+                ? (
+                    await cluster.ExecutePipelineAsync(
+                        [new ValkeyClusterCommand(key, command)],
+                        TestContext.Current.CancellationToken
+                    )
+                )[0]
+                : await cluster.ExecuteAsync(key, command, TestContext.Current.CancellationToken);
+        if (commandError)
+        {
+            var failure = await Assert.ThrowsAsync<ValkeyConnectionException>(ExecuteAsync);
+            Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, failure.DeliveryStatus);
+            Assert.Equal("NOSCRIPT", Assert.IsType<ValkeyServerException>(failure.InnerException).ErrorCode);
+        }
+        else
+        {
+            Assert.Equal(1, (await ExecuteAsync()).AsInt64());
+        }
+        await target.Session;
+        Assert.Single(target.ReceivedCommands, command => command[0] == "INCR");
+    }
+
     private static ValkeyClusterOptions Options(int seedPort) =>
         new()
         {

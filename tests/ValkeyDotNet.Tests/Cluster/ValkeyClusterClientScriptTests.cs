@@ -125,6 +125,56 @@ public sealed class ValkeyClusterClientScriptTests
         await target.Session;
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedAskingPreservesScriptResultsWithoutCacheRecovery(bool commandError)
+    {
+        const string key = "{script}:asking";
+        var slot = ValkeyClusterClient.GetHashSlot(key);
+        await using var target = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            Assert.Equal(["ASKING"], await session.ReadCommandAsync());
+            Assert.Equal("EVALSHA", (await session.ReadCommandAsync())[0]);
+            await session.SendAsync(
+                "-ERR ASKING refused\r\n" + (commandError ? "-NOSCRIPT No matching script.\r\n" : ":1\r\n")
+            );
+        });
+        FakeValkeyServer? seedServer = null;
+        seedServer = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.SendAsync(Topology(seedServer!.Port));
+            Assert.Equal("EVALSHA", (await session.ReadCommandAsync())[0]);
+            await session.SendAsync($"-ASK {slot} 127.0.0.1:{target.Port}\r\n");
+        });
+        await using var seed = seedServer;
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            new ValkeyClusterOptions { SeedNodes = [seed.ClientOptions()] },
+            TestContext.Current.CancellationToken
+        );
+        var call = cluster.ExecuteScriptAsync(
+            new ValkeyScript("return redis.call('INCR', KEYS[1])"),
+            [key],
+            [],
+            TestContext.Current.CancellationToken
+        );
+        if (commandError)
+        {
+            var failure = await Assert.ThrowsAsync<ValkeyConnectionException>(() => call);
+            Assert.Equal(ValkeyCommandDeliveryStatus.MayHaveBeenSent, failure.DeliveryStatus);
+        }
+        else
+        {
+            Assert.Equal(1, (await call).AsInt64());
+        }
+        await target.Session;
+        Assert.Single(target.ReceivedCommands, command => command[0] == "EVALSHA");
+        Assert.DoesNotContain(target.ReceivedCommands, command => command[0] == "EVAL");
+    }
+
     private static string Topology(int port) =>
         "*1\r\n%2\r\n+slots\r\n*2\r\n:0\r\n:16383\r\n+nodes\r\n*1\r\n%4\r\n+role\r\n+master\r\n+endpoint\r\n+127.0.0.1\r\n+port\r\n:"
         + port.ToString(CultureInfo.InvariantCulture)

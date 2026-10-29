@@ -209,7 +209,8 @@ public sealed partial class ValkeyClient : IAsyncDisposable
     private async Task<IReadOnlyList<RespValue>> ExecutePipelineCoreAsync(
         IEnumerable<ValkeyCommand> commands,
         TimeSpan? timeout,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool asking = false
     )
     {
         ArgumentNullException.ThrowIfNull(commands);
@@ -225,13 +226,49 @@ public sealed partial class ValkeyClient : IAsyncDisposable
                 $"A pipeline cannot exceed the configured {_options.MaxPendingRequests} pending requests.",
                 nameof(commands)
             );
-        foreach (var command in commandList)
-            EnsureSupported(command);
+        for (var i = 0; i < commandList.Length; i++)
+        {
+            if (asking && i == 0)
+            {
+                continue; // Only SendAskingCommandAsync supplies this connection-owned prefix.
+            }
+            EnsureSupported(commandList[i]);
+        }
 
         var payloads = new byte[commandList.Length][];
         for (var i = 0; i < commandList.Length; i++)
             payloads[i] = RespWriter.Encode(commandList[i]);
         return await SendMultiplexedAsync(payloads, timeout, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<RespValue> SendAskingCommandAsync(
+        ValkeyCommand command,
+        TimeSpan? timeout,
+        CancellationToken cancellationToken
+    )
+    {
+        var replies = await ExecutePipelineCoreAsync(
+                [new ValkeyCommand("ASKING"), command],
+                timeout,
+                cancellationToken,
+                asking: true
+            )
+            .ConfigureAwait(false);
+        var response = replies[1];
+        if (
+            replies[0].Type is RespType.SimpleError or RespType.BlobError
+            && response.Type is RespType.SimpleError or RespType.BlobError
+        )
+        {
+            // Both commands were written. An ASKING rejection cannot prove that the following
+            // command did not execute, and must not authorize redirect or script-cache replay.
+            throw new ValkeyConnectionException(
+                "ASKING failed and the following command returned an error; its effects may have occurred.",
+                response.ToServerException(),
+                ValkeyCommandDeliveryStatus.MayHaveBeenSent
+            );
+        }
+        return response;
     }
 
     public async Task<string> PingAsync(CancellationToken cancellationToken = default) =>

@@ -141,15 +141,9 @@ public sealed partial class ValkeyClient
             if (!asking)
                 return await ExecuteCoreAsync(command, remaining, cancellationToken).ConfigureAwait(false);
 
-            var replies = await ExecutePipelineCoreAsync(
-                    [new ValkeyCommand("ASKING"), command],
-                    remaining,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-            replies[0].ThrowIfError();
-            replies[1].ThrowIfError();
-            return replies[1];
+            var response = await SendAskingCommandAsync(command, remaining, cancellationToken).ConfigureAwait(false);
+            response.ThrowIfError();
+            return response;
         }
         catch (ValkeyCommandTimeoutException exception) when (timeout is not null)
         {
