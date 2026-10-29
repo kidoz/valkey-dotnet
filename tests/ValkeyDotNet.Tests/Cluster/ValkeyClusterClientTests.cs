@@ -662,6 +662,207 @@ public sealed class ValkeyClusterClientTests
         Assert.Single(target.ReceivedCommands, command => command[0] == "INCR");
     }
 
+    [Fact]
+    public async Task SlowNodeConnectDoesNotBlockOtherRoutesOrTopologyRefresh()
+    {
+        var lowKey = FindKey(0, 8191);
+        var highKey = FindKey(8192, 16383);
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var slow = FakeValkeyServer.Start(async session =>
+        {
+            Assert.Equal("HELLO", (await session.ReadCommandAsync())[0]);
+            connecting.TrySetResult();
+            await release.Task;
+            await session.SendAsync(FakeValkeyServer.HelloResp3);
+            Assert.Equal(["GET", lowKey], await session.ReadCommandAsync());
+            await session.SendAsync("+slow\r\n");
+        });
+        FakeValkeyServer? seedServer = null;
+        seedServer = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            var topology =
+                "*2\r\n" + Shard(0, 8191, "127.0.0.1", slow.Port) + Shard(8192, 16383, "127.0.0.1", seedServer!.Port);
+            Assert.Equal(["CLUSTER", "SHARDS"], await session.ReadCommandAsync());
+            await session.SendAsync(topology);
+            Assert.Equal(["GET", highKey], await session.ReadCommandAsync());
+            await session.SendAsync("+fast\r\n");
+            Assert.Equal(["CLUSTER", "SHARDS"], await session.ReadCommandAsync());
+            await session.SendAsync(topology);
+            await session.ReadCommandAsync();
+        });
+        await using var seed = seedServer;
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            Options(seed.Port),
+            TestContext.Current.CancellationToken
+        );
+        var pending = cluster.GetStringAsync(lowKey, TestContext.Current.CancellationToken);
+        try
+        {
+            await connecting.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            Assert.Equal(
+                "fast",
+                await cluster
+                    .GetStringAsync(highKey, TestContext.Current.CancellationToken)
+                    .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)
+            );
+            await cluster
+                .RefreshTopologyAsync(TestContext.Current.CancellationToken)
+                .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        Assert.Equal("slow", await pending);
+    }
+
+    [Fact]
+    public async Task InFlightNodeReservationsCountTowardsTheCapAndAreReleasedOnFailure()
+    {
+        var lowKey = FindKey(0, 8191);
+        var highKey = FindKey(8192, 16383);
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var failing = FakeValkeyServer.Start(async session =>
+        {
+            await session.ReadCommandAsync();
+            connecting.TrySetResult();
+            await release.Task;
+            session.Close();
+        });
+        await using var healthy = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            Assert.Equal(["GET", highKey], await session.ReadCommandAsync());
+            await session.SendAsync("+healthy\r\n");
+        });
+        await using var seed = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.SendAsync(
+                "*2\r\n" + Shard(0, 8191, "127.0.0.1", failing.Port) + Shard(8192, 16383, "127.0.0.1", healthy.Port)
+            );
+            await session.ReadCommandAsync();
+        });
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            new ValkeyClusterOptions { SeedNodes = [seed.ClientOptions()], MaxNodeConnections = 2 },
+            TestContext.Current.CancellationToken
+        );
+        var pending = cluster.GetStringAsync(lowKey, TestContext.Current.CancellationToken);
+        try
+        {
+            await connecting.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            var failure = await Assert.ThrowsAsync<ValkeyClusterException>(() =>
+                cluster.GetStringAsync(highKey, TestContext.Current.CancellationToken)
+            );
+            Assert.Contains("total limit of 2", failure.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        await Assert.ThrowsAnyAsync<IOException>(() => pending);
+        Assert.Equal("healthy", await cluster.GetStringAsync(highKey, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task ConcurrentNodeAcquisitionSharesReservationsAndDisposeCancelsTheHandshake()
+    {
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var target = FakeValkeyServer.Start(async session =>
+        {
+            await session.ReadCommandAsync();
+            connecting.TrySetResult();
+            await session.ReadCommandAsync();
+        });
+        await using var seed = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.SendAsync(ShardsTopology(target.Port));
+            await session.ReadCommandAsync();
+        });
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            new ValkeyClusterOptions { SeedNodes = [seed.ClientOptions()], MaxNodeConnections = 2 },
+            TestContext.Current.CancellationToken
+        );
+        var first = cluster.GetStringAsync("key", TestContext.Current.CancellationToken);
+        await connecting.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        var second = cluster.GetStringAsync("key", TestContext.Current.CancellationToken);
+        Assert.False(second.IsCompleted);
+        await cluster.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => second);
+        await target.Session;
+        Assert.Single(target.ReceivedCommands);
+    }
+
+    [Fact]
+    public async Task PartialNodePoolFailureDisposesOpenedSocketsAndReleasesEveryReservation()
+    {
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var target = FakeValkeyServer.StartMany(
+            2,
+            async (index, session) =>
+            {
+                if (index == 0)
+                {
+                    await session.ExpectHandshakeAsync();
+                    try
+                    {
+                        await session.ReadCommandAsync();
+                    }
+                    catch (IOException)
+                    {
+                        closed.TrySetResult();
+                    }
+                }
+                else
+                {
+                    await session.ReadCommandAsync();
+                    session.Close();
+                }
+            }
+        );
+        var lowKey = FindKey(0, 8191);
+        var highKey = FindKey(8192, 16383);
+        await using var healthy = FakeValkeyServer.StartMany(
+            2,
+            async (_, session) =>
+            {
+                await session.ExpectHandshakeAsync();
+                Assert.Equal(["GET", highKey], await session.ReadCommandAsync());
+                await session.SendAsync("+healthy\r\n");
+            }
+        );
+        await using var seed = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.SendAsync(
+                "*2\r\n" + Shard(0, 8191, "127.0.0.1", target.Port) + Shard(8192, 16383, "127.0.0.1", healthy.Port)
+            );
+            await session.ReadCommandAsync();
+        });
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            new ValkeyClusterOptions
+            {
+                SeedNodes = [seed.ClientOptions()],
+                MaxNodeConnections = 3,
+                ConnectionsPerNode = 2,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await Assert.ThrowsAnyAsync<IOException>(() =>
+            cluster.GetStringAsync(lowKey, TestContext.Current.CancellationToken)
+        );
+        await closed.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        Assert.Equal("healthy", await cluster.GetStringAsync(highKey, TestContext.Current.CancellationToken));
+    }
+
     [Theory]
     [InlineData("AUTH")]
     [InlineData("SELECT")]

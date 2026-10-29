@@ -41,11 +41,14 @@ Idempotent. Closes every node connection opened by the cluster client.
 |---|---|---|
 | `SeedNodes` | one default `ValkeyClientOptions` | Nodes tried during discovery. The successful seed's TLS, authentication, protocol, database, connect and response-drain timeouts, pending-request limit, and parser settings are copied to discovered node connections. |
 | `MaxRedirects` | `5` | Maximum `MOVED` or `ASK` redirects followed for one command. Valid range: 0–16. |
-| `MaxNodeConnections` | `256` | Maximum retained node connections, bounding file-descriptor and memory growth as endpoints change. Valid range: 1–16,384. |
+| `MaxNodeConnections` | `256` | Maximum retained and in-flight reserved node connections, bounding file-descriptor and memory growth as endpoints change. Valid range: 1–16,384. |
 | `ConnectionsPerNode` | `1` | Multiplexed connections opened per active node. Values above one reduce response head-of-line blocking between independent workloads. Valid range: 1–16 and no greater than `MaxNodeConnections`. |
 | `EndpointMapper` | `null` | Optional translation from an announced host and port to a reachable or TLS-valid endpoint. The returned endpoint is validated before use. |
 
-At least one seed is required. Every seed is validated before networking begins.
+At least one seed is required. Every seed is validated before networking begins. Lazy node connections
+reserve capacity before connecting outside the shared pool lock. Calls to the same node share its
+pending acquisition; another node's connect does not block existing routes or topology refresh.
+Failed attempts release their reservations and sockets. Disposal cancels and joins pending connects.
 
 ## Routing
 

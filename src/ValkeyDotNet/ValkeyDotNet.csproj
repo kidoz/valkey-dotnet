@@ -37,7 +37,7 @@
         CA2000  ConnectAsync transfers ownership of the client to the caller and disposes it on
                 every failure path.
         CA2213  The coordination primitives — _writeGate, _pendingCapacity, and _readerShutdown on
-                ValkeyClient, _clientGate on ValkeyClusterClient, and _shutdown on
+                ValkeyClient, _clientGate and _connectionShutdown on ValkeyClusterClient, and _shutdown on
                 ValkeyConnectionOwner — are deliberately not
                 disposed. Invalidation runs while other callers may still be waiting on those
                 gates and while the response loop still observes _readerShutdown.Token; disposing

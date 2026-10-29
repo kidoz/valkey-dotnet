@@ -21,6 +21,7 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
         private int _next;
 
         public List<ValkeyClient> Clients { get; } = [];
+        public TaskCompletionSource? Connecting { get; set; }
 
         public ValkeyClient Select()
         {
@@ -66,6 +67,7 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
     private readonly Dictionary<ClusterEndpoint, NodePool> _pools = [];
     private readonly SemaphoreSlim _clientGate = new(1, 1);
     private ClusterEndpoint?[] _slots;
+    private readonly CancellationTokenSource _connectionShutdown = new();
     private int _connectionCount;
     private int _disposed;
 
@@ -509,11 +511,17 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
+        await _connectionShutdown.CancelAsync().ConfigureAwait(false);
         await _clientGate.WaitAsync().ConfigureAwait(false);
         ValkeyClient[] clients;
+        Task[] connecting;
         try
         {
             clients = _pools.Values.SelectMany(static pool => pool.Clients).ToArray();
+            connecting = _pools
+                .Values.Where(static pool => pool.Connecting is not null)
+                .Select(static pool => pool.Connecting!.Task)
+                .ToArray();
             _pools.Clear();
             _connectionCount = 0;
         }
@@ -523,52 +531,147 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
         }
 
         foreach (var client in clients)
+        {
             await client.DisposeAsync().ConfigureAwait(false);
+        }
+        try
+        {
+            await Task.WhenAll(connecting).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Every attempt releases its sockets before completing its shared notification.
+        }
     }
 
     private async Task<ValkeyClient> GetClientAsync(ClusterEndpoint endpoint, CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
-        await _clientGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        while (true)
         {
             ThrowIfDisposed();
-            if (!_pools.TryGetValue(endpoint, out var pool))
+            TaskCompletionSource connecting;
+            NodePool pool;
+            var missing = 0;
+            await _clientGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
-                pool = new NodePool();
-                _pools.Add(endpoint, pool);
+                ThrowIfDisposed();
+                if (!_pools.TryGetValue(endpoint, out pool!))
+                {
+                    pool = new NodePool();
+                    _pools.Add(endpoint, pool);
+                }
+                _connectionCount -= pool.RemoveDisposed();
+                if (pool.Connecting is { } existing)
+                {
+                    connecting = existing;
+                }
+                else
+                {
+                    missing = _options.ConnectionsPerNode - pool.Clients.Count;
+                    if (missing == 0)
+                    {
+                        return pool.Select();
+                    }
+                    if (missing > _options.MaxNodeConnections - _connectionCount)
+                    {
+                        if (pool.Clients.Count == 0)
+                        {
+                            _pools.Remove(endpoint);
+                        }
+                        throw new ValkeyClusterException(
+                            $"Opening {_options.ConnectionsPerNode} connections for a cluster node would exceed the "
+                                + $"configured total limit of {_options.MaxNodeConnections}."
+                        );
+                    }
+                    connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    pool.Connecting = connecting;
+                    _connectionCount += missing; // Reservations count before any network operation starts.
+                }
             }
-
-            _connectionCount -= pool.RemoveDisposed();
-
-            var missing = _options.ConnectionsPerNode - pool.Clients.Count;
-            if (missing > _options.MaxNodeConnections - _connectionCount)
-                throw new ValkeyClusterException(
-                    $"Opening {_options.ConnectionsPerNode} connections for a cluster node would exceed the "
-                        + $"configured total limit of {_options.MaxNodeConnections}."
-                );
-
-            while (pool.Clients.Count < _options.ConnectionsPerNode)
+            finally
             {
-                var client = await ValkeyClient
-                    .ConnectAsync(CreateNodeOptions(endpoint), cancellationToken)
-                    .ConfigureAwait(false);
-                pool.Clients.Add(client);
-                _connectionCount++;
+                _clientGate.Release();
             }
-            return pool.Select();
+            if (missing > 0)
+            {
+                _ = PopulatePoolAsync(endpoint, pool, missing, connecting, cancellationToken);
+            }
+            await connecting.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch
+    }
+
+    private async Task PopulatePoolAsync(
+        ClusterEndpoint endpoint,
+        NodePool pool,
+        int reserved,
+        TaskCompletionSource completion,
+        CancellationToken cancellationToken
+    )
+    {
+        var clients = new List<ValkeyClient>(reserved);
+        Exception? failure = null;
+        try
         {
-            if (_pools.TryGetValue(endpoint, out var pool) && pool.Clients.Count == 0)
-                _pools.Remove(endpoint);
-            throw;
+            using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                _connectionShutdown.Token
+            );
+            for (var i = 0; i < reserved; i++)
+            {
+                clients.Add(
+                    await ValkeyClient.ConnectAsync(CreateNodeOptions(endpoint), shutdown.Token).ConfigureAwait(false)
+                );
+            }
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        await _clientGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            if (failure is null && Volatile.Read(ref _disposed) == 0 && IsPoolCurrent(endpoint, pool))
+            {
+                pool.Clients.AddRange(clients);
+                pool.Connecting = null;
+                completion.TrySetResult();
+                return; // Reservations become retained connections; ownership has transferred.
+            }
+            failure ??= new ObjectDisposedException(nameof(ValkeyClusterClient));
+        }
+        finally
+        {
+            _clientGate.Release();
+        }
+        foreach (var client in clients)
+        {
+            await client.DisposeAsync().ConfigureAwait(false);
+        }
+        await _clientGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            if (IsPoolCurrent(endpoint, pool))
+            {
+                _connectionCount -= reserved;
+                pool.Connecting = null;
+                if (pool.Clients.Count == 0)
+                {
+                    _pools.Remove(endpoint);
+                }
+            }
+            completion.TrySetException(failure);
+            _ = completion.Task.Exception; // Observe even if every acquisition waiter cancelled.
         }
         finally
         {
             _clientGate.Release();
         }
     }
+
+    private bool IsPoolCurrent(ClusterEndpoint endpoint, NodePool pool) =>
+        _pools.TryGetValue(endpoint, out var current) && ReferenceEquals(current, pool);
 
     private async Task<ValkeyClient> GetClientWithinDeadlineAsync(
         ClusterEndpoint endpoint,
@@ -606,8 +709,10 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
             if (_pools.TryGetValue(endpoint, out var pool) && pool.Clients.Remove(client))
             {
                 _connectionCount--;
-                if (pool.Clients.Count == 0)
+                if (pool.Clients.Count == 0 && pool.Connecting is null)
+                {
                     _pools.Remove(endpoint);
+                }
             }
         }
         finally
