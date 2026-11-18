@@ -3,7 +3,7 @@
         <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <PackageId>ValkeyDotNet</PackageId>
-        <Version>1.2.0</Version>
+        <Version>1.2.1</Version>
         <Description>A .NET client library for Valkey</Description>
         <Authors>Aleksandr Pavlov</Authors>
         <Copyright>Copyright (c) 2026 Aleksandr Pavlov</Copyright>
@@ -12,7 +12,7 @@
         <RepositoryType>git</RepositoryType>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageReadmeFile>README.md</PackageReadmeFile>
-        <PackageReleaseNotes>Improves connection integrity and resilience: push notifications dispatch through a bounded background queue with DroppedPushCount, server-error and protocol diagnostics are bounded and sanitized, runtime session-changing commands are rejected on shared connections, cluster node connects reserve capacity and no longer inherit caller cancellation or deadlines, ambiguous ASKING failures surface as ValkeyAskingException without replay while keeping the connection usable, and script recovery runs only for exact NOSCRIPT cache-miss messages.</PackageReleaseNotes>
+        <PackageReleaseNotes>Adds a .NET 11 build alongside .NET 10 and improves connection integrity: pending commands and pipelines settle when request admission overlaps connection shutdown, cluster pipelines validate node-group sizes before dispatch and report sibling writes on timeout, authenticated setup errors are redacted with an exact SELECT acknowledgement required, and chained RESP3 attributes parse with allocation proportional to their entry count.</PackageReleaseNotes>
         <PackageTags>valkey;redis;resp;cache;database</PackageTags>
         <!--
       Suppressions for AnalysisLevel=latest-all. Each is a deliberate design decision;
