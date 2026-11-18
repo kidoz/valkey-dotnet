@@ -1,7 +1,7 @@
 # ValkeyDotNet
 
 [![Language](https://img.shields.io/badge/language-C%23-512BD4)](https://learn.microsoft.com/dotnet/csharp/)
-[![.NET SDK](https://img.shields.io/badge/.NET%20SDK-10.0.400-512BD4)](https://github.com/kidoz/valkey-dotnet/blob/main/global.json)
+[![.NET SDK](https://img.shields.io/badge/.NET%20SDK-11.0.100-512BD4)](https://github.com/kidoz/valkey-dotnet/blob/main/global.json)
 [![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/kidoz/valkey-dotnet/blob/main/LICENSE)
 
 **ValkeyDotNet** — a .NET client library for [Valkey](https://valkey.io/), written entirely in C#
@@ -54,8 +54,7 @@ pooling. See
 
 ## Requirements
 
-- .NET 10 SDK (pinned via `global.json`)
-- C# 14
+- A .NET 10 or .NET 11 application. The next package release includes builds for both frameworks.
 - A reachable Valkey server (default port 6379). Verified against Valkey 9.1, 8.1, and 7.2 —
   see [compatibility](docs/reference/valkey-compatibility.md).
 
@@ -177,6 +176,9 @@ preserve protocol synchronization. Check each reply; an unchecked result hides f
 
 ## Build and test
 
+Install the .NET 11 SDK (pinned via `global.json`) and the .NET 10 runtime to run the unit suite on
+both frameworks.
+
 Common tasks are exposed via [`just`](https://github.com/casey/just) (see `justfile`):
 
 ```bash
@@ -193,11 +195,11 @@ The equivalent raw commands:
 dotnet tool restore
 dotnet csharpier check .
 dotnet build ValkeyDotNet.slnx
-dotnet run --project tests/ValkeyDotNet.Tests
+dotnet test --project tests/ValkeyDotNet.Tests
 dotnet pack src/ValkeyDotNet -c Release -o artifacts
 ```
 
-The solution targets .NET 10 with `TreatWarningsAsErrors` and `AnalysisLevel=latest-all`; every
+The solution uses C# 14 with `TreatWarningsAsErrors` and `AnalysisLevel=latest-all`. Every
 suppressed analyzer rule carries a written justification in the owning `.csproj`. CSharpier owns all
 formatting, including project files.
 

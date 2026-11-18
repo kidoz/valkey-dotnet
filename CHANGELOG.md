@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Include a .NET 11 build alongside .NET 10 and run the unit suite on both frameworks.
+
 ## [1.2.0] - 2026-10-29
 
 ### Fixed

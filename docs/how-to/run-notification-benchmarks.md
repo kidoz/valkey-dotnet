@@ -1,6 +1,6 @@
 # Run publish and invalidation benchmarks
 
-From the repository root, with .NET 10 and local Docker available:
+From the repository root, with the .NET 11 SDK, .NET 10 runtime, and local Docker available:
 
 ```bash
 just ci

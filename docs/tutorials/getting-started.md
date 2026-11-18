@@ -3,7 +3,7 @@
 In this tutorial you will connect to a Valkey server, store and read a value, run a counter, and read
 a raw reply. It takes about ten minutes and ends with a program you can run.
 
-You need the .NET 10 SDK and Docker.
+You need the .NET 11 SDK and Docker.
 
 ## 1. Start a Valkey server
 
