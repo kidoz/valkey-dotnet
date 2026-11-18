@@ -17,7 +17,8 @@ Opens the TCP connection, performs the TLS handshake when
 [`UseTls`](client-options.md) is set, then sends one `HELLO` carrying protocol selection, ACL
 authentication, and the client name. Issues `SELECT` when `Database` is non-zero. The whole sequence
 is bounded by `ConnectTimeout`; exceeding it throws `TimeoutException`. Any failure disposes the
-socket before propagating.
+socket before propagating. A server error during a credential-bearing handshake exposes a fixed
+message and an allowlisted error code. Database selection requires a simple-string `OK` acknowledgement.
 
 ```csharp
 public ValueTask DisposeAsync()

@@ -115,10 +115,7 @@ public sealed partial class ValkeySubscriber
             {
                 var select = await HandshakeCommandAsync(new ValkeyCommand("SELECT", options.Database), token)
                     .ConfigureAwait(false);
-                if (select.Type != RespType.SimpleString || !select.AsBytes().Span.SequenceEqual("OK"u8))
-                {
-                    throw new ValkeyProtocolException("Unexpected subscriber database acknowledgement.");
-                }
+                ValkeyClient.ValidateDatabaseAcknowledgement(select);
             }
         }
 

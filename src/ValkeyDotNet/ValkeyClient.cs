@@ -392,26 +392,17 @@ public sealed partial class ValkeyClient : IAsyncDisposable
             arguments.Add(_options.ClientName);
         }
 
-        ServerInfo = await SendAndReadAsync(new ValkeyCommand("HELLO", arguments.ToArray()), cancellationToken)
+        ServerInfo = await SendSetupCommandAsync(new ValkeyCommand("HELLO", arguments.ToArray()), cancellationToken)
             .ConfigureAwait(false);
-        if (_tracking is not null)
-        {
-            TrackingSession.ThrowIfSetupError(ServerInfo);
-        }
-        ServerInfo.ThrowIfError();
         if (ServerInfo.Type is not (RespType.Map or RespType.Array))
             throw new ValkeyProtocolException("HELLO returned an unexpected response type.");
         NegotiatedProtocol = ReadNegotiatedProtocol(ServerInfo);
 
         if (_options.Database != 0)
         {
-            var select = await SendAndReadAsync(new ValkeyCommand("SELECT", _options.Database), cancellationToken)
+            var select = await SendSetupCommandAsync(new ValkeyCommand("SELECT", _options.Database), cancellationToken)
                 .ConfigureAwait(false);
-            if (_tracking is not null)
-            {
-                TrackingSession.ThrowIfSetupError(select);
-            }
-            select.ThrowIfError();
+            ValidateDatabaseAcknowledgement(select);
         }
         if (_tracking is not null)
         {
@@ -419,12 +410,19 @@ public sealed partial class ValkeyClient : IAsyncDisposable
             {
                 throw new ValkeyProtocolException("Managed tracking requires a negotiated RESP3 connection.");
             }
-            var enabled = await SendAndReadAsync(_tracking.EnableCommand, cancellationToken).ConfigureAwait(false);
-            TrackingSession.ThrowIfSetupError(enabled);
+            var enabled = await SendSetupCommandAsync(_tracking.EnableCommand, cancellationToken).ConfigureAwait(false);
             if (enabled.Type != RespType.SimpleString || !enabled.AsBytes().Span.SequenceEqual("OK"u8))
             {
                 throw new ValkeyProtocolException("CLIENT TRACKING returned an unexpected acknowledgement.");
             }
+        }
+    }
+
+    internal static void ValidateDatabaseAcknowledgement(RespValue reply)
+    {
+        if (reply.Type != RespType.SimpleString || !reply.AsBytes().Span.SequenceEqual("OK"u8))
+        {
+            throw new ValkeyProtocolException("SELECT returned an unexpected acknowledgement.");
         }
     }
 
@@ -506,12 +504,21 @@ public sealed partial class ValkeyClient : IAsyncDisposable
                 + "which this client does not implement",
         };
 
-    private async Task<RespValue> SendAndReadAsync(ValkeyCommand command, CancellationToken cancellationToken)
+    private async Task<RespValue> SendSetupCommandAsync(ValkeyCommand command, CancellationToken cancellationToken)
     {
         var payload = RespWriter.Encode(command);
         await _stream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
         await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        return await ReadNonPushAsync(cancellationToken).ConfigureAwait(false);
+        var reply = await ReadNonPushAsync(cancellationToken).ConfigureAwait(false);
+        if (_options.Password is not null || _tracking is not null)
+        {
+            reply.ThrowIfSetupError();
+        }
+        else
+        {
+            reply.ThrowIfError();
+        }
+        return reply;
     }
 
     private void StartResponseLoop()

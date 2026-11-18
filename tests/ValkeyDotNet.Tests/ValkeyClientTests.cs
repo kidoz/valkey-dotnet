@@ -103,12 +103,12 @@ public sealed class ValkeyClientTests
         Assert.Equal(["HELLO", "3", "AUTH", "default", "s3cret"], server.ReceivedCommands[0]);
     }
 
-    [Fact]
-    public async Task ARejectedHandshakeDoesNotLeakCredentials()
+    [Theory]
+    [InlineData("-WRONGPASS acl-user-x7 s3cret-x7\r\n", "WRONGPASS")]
+    [InlineData("-s3cret-x7 acl-user-x7\r\n", "ERR")]
+    public async Task ARejectedHandshakeDoesNotLeakCredentials(string reply, string expectedCode)
     {
-        await using var server = FakeValkeyServer.Start(session =>
-            session.ExpectHandshakeAsync("-WRONGPASS invalid username-password pair or user is disabled\r\n")
-        );
+        await using var server = FakeValkeyServer.Start(session => session.ExpectHandshakeAsync(reply));
         var options = new ValkeyClientOptions
         {
             Host = "127.0.0.1",
@@ -122,7 +122,7 @@ public sealed class ValkeyClientTests
         );
 
         // The message is the library's; the stack trace is not, so assert on what this code controls.
-        Assert.Equal("WRONGPASS", failure.ErrorCode);
+        Assert.Equal(expectedCode, failure.ErrorCode);
         Assert.DoesNotContain("s3cret-x7", failure.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("acl-user-x7", failure.Message, StringComparison.Ordinal);
     }
@@ -202,6 +202,29 @@ public sealed class ValkeyClientTests
         }
 
         Assert.Equal(["SELECT", "3"], server.ReceivedCommands[1]);
+    }
+
+    [Theory]
+    [InlineData(":1\r\n")]
+    [InlineData("+QUEUED\r\n")]
+    [InlineData("$2\r\nOK\r\n")]
+    public async Task ConnectAsyncRequiresExactDatabaseAcknowledgement(string reply)
+    {
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            Assert.Equal(["SELECT", "3"], await session.ReadCommandAsync());
+            await session.SendAsync(reply);
+        });
+        var options = new ValkeyClientOptions
+        {
+            Host = "127.0.0.1",
+            Port = server.Port,
+            Database = 3,
+        };
+        await Assert.ThrowsAsync<ValkeyProtocolException>(() =>
+            ValkeyClient.ConnectAsync(options, TestContext.Current.CancellationToken)
+        );
     }
 
     [Fact]

@@ -121,6 +121,22 @@ public sealed class RespValue
         return new ValkeyServerException(builder.ToString());
     }
 
+    internal void ThrowIfSetupError()
+    {
+        if (Type is RespType.SimpleError or RespType.BlobError)
+        {
+            var bytes = AsBytes().Span;
+            var separator = bytes.IndexOf((byte)' ');
+            var code = separator < 0 ? bytes : bytes[..separator];
+            var category =
+                code.SequenceEqual("NOPERM"u8) ? "NOPERM"
+                : code.SequenceEqual("WRONGPASS"u8) ? "WRONGPASS"
+                : code.SequenceEqual("NOAUTH"u8) ? "NOAUTH"
+                : "ERR";
+            throw new ValkeyServerException($"{category} Connection initialization was rejected.");
+        }
+    }
+
     public void ThrowIfError()
     {
         if (Type is RespType.SimpleError or RespType.BlobError)

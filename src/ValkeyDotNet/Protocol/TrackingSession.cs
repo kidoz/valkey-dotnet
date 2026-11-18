@@ -152,18 +152,4 @@ internal sealed class TrackingSession
             }
         }
     }
-
-    internal static void ThrowIfSetupError(RespValue response)
-    {
-        if (response.Type is RespType.SimpleError or RespType.BlobError)
-        {
-            var bytes = response.AsBytes().Span;
-            var code =
-                bytes.StartsWith("NOPERM "u8) ? "NOPERM"
-                : bytes.StartsWith("WRONGPASS "u8) ? "WRONGPASS"
-                : bytes.StartsWith("NOAUTH "u8) ? "NOAUTH"
-                : "ERR";
-            throw new ValkeyServerException($"{code} Tracking connection initialization was rejected.");
-        }
-    }
 }
