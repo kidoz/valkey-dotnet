@@ -47,6 +47,7 @@ public sealed partial class ValkeyClient : IAsyncDisposable
     private readonly TcpClient _tcpClient;
     private readonly Stream _stream;
     private readonly RespReader _reader;
+    private readonly Lock _admissionLock = new();
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly SemaphoreSlim _pendingCapacity;
     private readonly ConcurrentQueue<TaskCompletionSource<RespValue>> _pendingResponses = new();
@@ -562,12 +563,14 @@ public sealed partial class ValkeyClient : IAsyncDisposable
             writeGateAcquired = true;
             await _pendingCapacity.WaitAsync(admissionToken).ConfigureAwait(false);
             capacityAcquired = true;
-            ThrowIfDisposed();
-            cancellationToken.ThrowIfCancellationRequested();
-            timeoutCancellation?.Token.ThrowIfCancellationRequested();
-
-            _pendingResponses.Enqueue(pending);
-            enqueued = true;
+            lock (_admissionLock)
+            {
+                ThrowIfDisposed();
+                cancellationToken.ThrowIfCancellationRequested();
+                timeoutCancellation?.Token.ThrowIfCancellationRequested();
+                _pendingResponses.Enqueue(pending);
+                enqueued = true;
+            }
             if (cancellationToken.CanBeCanceled)
             {
                 cancellationRegistration = cancellationToken.Register(
@@ -655,13 +658,17 @@ public sealed partial class ValkeyClient : IAsyncDisposable
             writeGateAcquired = true;
             for (; capacityAcquired < pending.Length; capacityAcquired++)
                 await _pendingCapacity.WaitAsync(admissionToken).ConfigureAwait(false);
-            ThrowIfDisposed();
-            cancellationToken.ThrowIfCancellationRequested();
-            timeoutCancellation?.Token.ThrowIfCancellationRequested();
-
-            foreach (var response in pending)
-                _pendingResponses.Enqueue(response);
-            enqueued = true;
+            lock (_admissionLock)
+            {
+                ThrowIfDisposed();
+                cancellationToken.ThrowIfCancellationRequested();
+                timeoutCancellation?.Token.ThrowIfCancellationRequested();
+                foreach (var response in pending)
+                {
+                    _pendingResponses.Enqueue(response);
+                }
+                enqueued = true;
+            }
             if (cancellationToken.CanBeCanceled)
             {
                 cancellationRegistration = cancellationToken.Register(
@@ -889,8 +896,15 @@ public sealed partial class ValkeyClient : IAsyncDisposable
 
     private void InvalidateConnection(Exception failure)
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
+        // Closing admission before draining prevents writers from stranding new FIFO entries.
+        lock (_admissionLock)
+        {
+            if (_disposed != 0)
+            {
+                return;
+            }
+            Volatile.Write(ref _disposed, 1);
+        }
 
         _tracking?.InvalidateAll();
         _pushes.Writer.TryComplete();

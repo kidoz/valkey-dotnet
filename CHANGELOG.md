@@ -6,6 +6,10 @@
 
 - Include a .NET 11 build alongside .NET 10 and run the unit suite on both frameworks.
 
+### Fixed
+
+- Settle pending commands and pipelines when request admission overlaps connection shutdown.
+
 ## [1.2.0] - 2026-10-29
 
 ### Fixed

@@ -981,6 +981,41 @@ public sealed class ValkeyClientTests
     }
 
     [Fact]
+    public async Task DisposalSettlesPendingCommandsAndWritersWaitingForBatchCapacity()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            Assert.Equal(["PING"], await session.ReadCommandAsync());
+            written.SetResult();
+            await session.ReadCommandAsync();
+        });
+        var options = new ValkeyClientOptions
+        {
+            Host = "127.0.0.1",
+            Port = server.Port,
+            MaxPendingRequests = 2,
+        };
+        await using var client = await ValkeyClient.ConnectAsync(options, token);
+        var ping = new ValkeyCommand("PING");
+        var pending = client.ExecuteAsync(ping, token);
+        await written.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+        var batch = client.ExecutePipelineAsync([ping, ping], token);
+        var follower = client.ExecuteAsync(ping, token);
+        Assert.False(batch.IsCompleted);
+        Assert.False(follower.IsCompleted);
+        await client.DisposeAsync();
+        foreach (var task in new Task[] { pending, batch, follower })
+        {
+            await Assert.ThrowsAsync<ObjectDisposedException>(() => task.WaitAsync(TimeSpan.FromSeconds(10), token));
+        }
+        await server.Session;
+        Assert.Equal(2, server.ReceivedCommands.Count);
+    }
+
+    [Fact]
     public async Task EveryEntryPointThrowsAfterDispose()
     {
         await using var server = FakeValkeyServer.Start(session => session.ExpectHandshakeAsync());
