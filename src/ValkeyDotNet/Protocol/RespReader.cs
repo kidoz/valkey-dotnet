@@ -48,9 +48,7 @@ internal sealed class RespReader
 
     private async ValueTask<RespValue> ReadAfterPrefixAsync(byte prefix, int depth, CancellationToken cancellationToken)
     {
-        if (depth > _maxDepth)
-            throw new ValkeyProtocolException($"RESP nesting exceeds the configured limit of {_maxDepth}.");
-        CountElement();
+        BeginValue(depth);
 
         return prefix switch
         {
@@ -251,13 +249,30 @@ internal sealed class RespReader
         return new(key, value);
     }
 
+    private void BeginValue(int depth)
+    {
+        if (depth > _maxDepth)
+        {
+            throw new ValkeyProtocolException($"RESP nesting exceeds the configured limit of {_maxDepth}.");
+        }
+        CountElement();
+    }
+
     private async ValueTask<RespValue> ReadAttributedAsync(int depth, CancellationToken cancellationToken)
     {
-        var attributes = await ReadMapAsync(RespType.Map, depth, cancellationToken).ConfigureAwait(false);
+        var attributes = (await ReadMapAsync(RespType.Map, depth, cancellationToken).ConfigureAwait(false)).AsMap();
+        List<KeyValuePair<RespValue, RespValue>>? merged = null;
         var prefix = await ReadByteAsync(cancellationToken).ConfigureAwait(false);
+        while (prefix == (byte)'|')
+        {
+            BeginValue(++depth);
+            var next = await ReadMapAsync(RespType.Map, depth, cancellationToken).ConfigureAwait(false);
+            merged ??= [.. attributes];
+            merged.AddRange(next.AsMap());
+            prefix = await ReadByteAsync(cancellationToken).ConfigureAwait(false);
+        }
         var value = await ReadAfterPrefixAsync(prefix, depth + 1, cancellationToken).ConfigureAwait(false);
-        var merged = attributes.AsMap().Concat(value.Attributes).ToArray();
-        return value.WithAttributes(merged);
+        return value.WithAttributes(merged ?? attributes);
     }
 
     private async ValueTask<RespValue> ReadNullAsync(CancellationToken cancellationToken)

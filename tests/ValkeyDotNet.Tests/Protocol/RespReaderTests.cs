@@ -76,6 +76,47 @@ public sealed class RespReaderTests
     }
 
     [Fact]
+    public async Task ConsecutiveAttributesKeepWireOrderAndChargeEachWrapper()
+    {
+        const string frame = "|1\r\n+k\r\n:1\r\n|0\r\n|?\r\n+k\r\n:2\r\n.\r\n+ok\r\n";
+        var token = TestContext.Current.CancellationToken;
+        var value = await Reader(frame, maxResponseElements: 8, maxDepth: 3).ReadAsync(token);
+        Assert.Equal("ok", value.AsString());
+        Assert.Equal([1L, 2L], value.Attributes.Select(pair => pair.Value.AsInt64()));
+        await Assert.ThrowsAsync<ValkeyProtocolException>(async () =>
+            await Reader(frame, maxResponseElements: 7).ReadAsync(token)
+        );
+        await Assert.ThrowsAsync<ValkeyProtocolException>(async () =>
+            await Reader(frame, maxDepth: 2).ReadAsync(token)
+        );
+    }
+
+    [Fact]
+    public async Task AttributeParsingAllocationsScaleWithTheNumberOfPairs()
+    {
+        static async Task<long> MeasureAsync(int count, CancellationToken token)
+        {
+            var frame = string.Concat(Enumerable.Repeat("|1\r\n+k\r\n:1\r\n", count)) + "+ok\r\n";
+            var reader = Reader(frame, maxDepth: count);
+            // MemoryStream reads complete synchronously, keeping the measurement on one thread.
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            var value = await reader.ReadAsync(token);
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal(count, value.Attributes.Count);
+            return allocated;
+        }
+
+        var token = TestContext.Current.CancellationToken;
+        await MeasureAsync(4, token);
+        var smaller = await MeasureAsync(64, token);
+        var larger = await MeasureAsync(128, token);
+        Assert.True(
+            larger < 2.5 * smaller,
+            $"Doubling the attribute count increased allocations from {smaller} to {larger} bytes."
+        );
+    }
+
+    [Fact]
     public async Task ReadAsyncParsesStreamedValues()
     {
         var reader = Reader("$?\r\n;5\r\nhello\r\n;1\r\n!\r\n;0\r\n*?\r\n:1\r\n:2\r\n.\r\n%?\r\n+a\r\n:1\r\n.\r\n");
