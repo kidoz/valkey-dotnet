@@ -114,7 +114,10 @@ Each `ValkeyClusterCommand` pairs a command with its routing key. The client gro
 current primary, pipelines each node group, and executes independent groups concurrently. Replies
 retain the caller's input order. Ordinary server errors remain in place; `MOVED` and `ASK` replies
 are followed individually only after their initial node pipeline has been drained.
-The deadline method shares one deadline across all node groups and redirect work.
+The client checks every node group's size against `MaxPendingRequests` before dispatch.
+The deadline method shares one deadline across all node groups and redirect work. A pipeline
+timeout reports `NotSent` only when every group can establish that it sent no command.
+If any group completed or delivery is uncertain, it reports `MayHaveBeenSent`.
 
 ## Convenience methods
 

@@ -439,6 +439,103 @@ public sealed class ValkeyClusterClientTests
         Assert.Equal(["one", "two", "three"], replies.Select(static reply => reply.AsString()));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PipelineCapacityTimeoutReportsDeliveryAcrossAllGroups(bool includeSibling)
+    {
+        var token = TestContext.Current.CancellationToken;
+        var lowKey = FindKey(0, 8191);
+        var highKey = FindKey(8192, 16383);
+        var occupied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var high = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            Assert.Equal(["INCR", highKey], await session.ReadCommandAsync());
+            await session.SendAsync(":1\r\n");
+        });
+        FakeValkeyServer? seedServer = null;
+        seedServer = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.SendAsync(
+                "*2\r\n" + Shard(0, 8191, "127.0.0.1", seedServer!.Port) + Shard(8192, 16383, "127.0.0.1", high.Port)
+            );
+            Assert.Equal(["GET", lowKey], await session.ReadCommandAsync());
+            occupied.SetResult();
+            await release.Task;
+            await session.SendAsync("+done\r\n");
+        });
+        await using var seed = seedServer;
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            Options(seed.Port, maxPendingRequests: 1),
+            token
+        );
+        var blocker = cluster.GetStringAsync(lowKey, token);
+        try
+        {
+            await occupied.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+            var commands = new List<ValkeyClusterCommand> { new(lowKey, new ValkeyCommand("INCR", lowKey)) };
+            if (includeSibling)
+            {
+                commands.Add(new(highKey, new ValkeyCommand("INCR", highKey)));
+            }
+            var timeout = TimeSpan.FromSeconds(1);
+            var error = await Assert.ThrowsAsync<ValkeyCommandTimeoutException>(() =>
+                cluster.ExecutePipelineWithDeadlineAsync(commands, timeout, token)
+            );
+            Assert.Equal(timeout, error.Timeout);
+            Assert.Equal(
+                includeSibling ? ValkeyCommandDeliveryStatus.MayHaveBeenSent : ValkeyCommandDeliveryStatus.NotSent,
+                error.DeliveryStatus
+            );
+            if (includeSibling)
+            {
+                await high.Session.WaitAsync(TimeSpan.FromSeconds(10), token);
+                Assert.Single(high.ReceivedCommands, command => command[0] == "INCR");
+            }
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        Assert.Equal("done", await blocker);
+    }
+
+    [Fact]
+    public async Task OversizedNodeGroupRejectsWholePipelineBeforeDispatch()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var lowKey = FindKey(0, 8191);
+        var highKey = FindKey(8192, 16383);
+        await using var high = FakeValkeyServer.Start(session => session.ExpectHandshakeAsync());
+        FakeValkeyServer? seedServer = null;
+        seedServer = FakeValkeyServer.Start(async session =>
+        {
+            await session.ExpectHandshakeAsync();
+            await session.ReadCommandAsync();
+            await session.SendAsync(
+                "*2\r\n" + Shard(0, 8191, "127.0.0.1", seedServer!.Port) + Shard(8192, 16383, "127.0.0.1", high.Port)
+            );
+            Assert.Equal(["PING"], await session.ReadCommandAsync());
+            await session.SendAsync("+PONG\r\n");
+        });
+        await using var seed = seedServer;
+        await using var cluster = await ValkeyClusterClient.ConnectAsync(
+            Options(seed.Port, maxPendingRequests: 1),
+            token
+        );
+        var lowCommand = new ValkeyClusterCommand(lowKey, new ValkeyCommand("INCR", lowKey));
+        var highCommand = new ValkeyClusterCommand(highKey, new ValkeyCommand("INCR", highKey));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            cluster.ExecutePipelineAsync([lowCommand, highCommand, highCommand], token)
+        );
+        Assert.Equal("PONG", await cluster.PingAsync(token));
+        Assert.Empty(high.ReceivedCommands);
+    }
+
     [Fact]
     public async Task ConnectionsPerNodeAllowsIndependentCommandsToOverlap()
     {
@@ -1057,7 +1154,7 @@ public sealed class ValkeyClusterClientTests
         Assert.DoesNotContain(seed.ReceivedCommands, command => command[0] is "INCR" || command[0] == name);
     }
 
-    private static ValkeyClusterOptions Options(int seedPort) =>
+    private static ValkeyClusterOptions Options(int seedPort, int maxPendingRequests = 1024) =>
         new()
         {
             SeedNodes =
@@ -1066,6 +1163,7 @@ public sealed class ValkeyClusterClientTests
                 {
                     Host = "127.0.0.1",
                     Port = seedPort,
+                    MaxPendingRequests = maxPendingRequests,
                     ConnectTimeout = TimeSpan.FromSeconds(30),
                 },
             ],

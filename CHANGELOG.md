@@ -9,6 +9,7 @@
 ### Fixed
 
 - Settle pending commands and pipelines when request admission overlaps connection shutdown.
+- Validate all cluster pipeline group sizes before dispatch and account for sibling writes when reporting a timeout.
 
 ## [1.2.0] - 2026-10-29
 

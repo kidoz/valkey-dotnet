@@ -326,14 +326,36 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
                 group = [];
                 groups.Add(endpoint, group);
             }
+            if (group.Count == _nodeTemplate.MaxPendingRequests)
+            {
+                throw new ArgumentException(
+                    $"A pipeline node group cannot exceed the configured {_nodeTemplate.MaxPendingRequests} pending requests.",
+                    nameof(commands)
+                );
+            }
             group.Add(new PipelineItem(index, slot, endpoint, clusterCommand.Command));
         }
 
         var responses = new RespValue[commandList.Length];
-        var tasks = groups.Values.Select(group =>
-            ExecutePipelineGroupAsync(group, responses, timeout, startedAt, cancellationToken)
-        );
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+        var tasks = groups
+            .Values.Select(group => ExecutePipelineGroupAsync(group, responses, timeout, startedAt, cancellationToken))
+            .ToArray();
+        try
+        {
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        catch (ValkeyCommandTimeoutException) when (timeout is { } duration)
+        {
+            // Every group has settled. A local admission timeout proves nothing about sibling writes.
+            var allUnsent = tasks.All(static task =>
+                task.Exception?.InnerException
+                    is IValkeyCommandFailure { DeliveryStatus: ValkeyCommandDeliveryStatus.NotSent }
+            );
+            throw new ValkeyCommandTimeoutException(
+                duration,
+                allUnsent ? ValkeyCommandDeliveryStatus.NotSent : ValkeyCommandDeliveryStatus.MayHaveBeenSent
+            );
+        }
         return responses;
     }
 
@@ -733,9 +755,7 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
                 endpoint,
                 timeout,
                 startedAt,
-                // Other node groups execute concurrently, so the batch as a whole may already have
-                // reached Valkey even when this group is still acquiring its connection.
-                ValkeyCommandDeliveryStatus.MayHaveBeenSent,
+                ValkeyCommandDeliveryStatus.NotSent,
                 cancellationToken
             )
             .ConfigureAwait(false);
@@ -746,7 +766,7 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
                 ? await client
                     .ExecutePipelineWithDeadlineAsync(
                         group.Select(static item => item.Command),
-                        GetRemainingTimeout(operationTimeout, startedAt),
+                        GetRemainingTimeout(operationTimeout, startedAt, ValkeyCommandDeliveryStatus.NotSent),
                         cancellationToken
                     )
                     .ConfigureAwait(false)
@@ -834,6 +854,12 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
                         : await client.ExecutePipelineAsync([item.Command], cancellationToken).ConfigureAwait(false);
                     response = replies[0];
                 }
+            }
+            catch (ValkeyCommandTimeoutException failure)
+                when (timeout is { } budget && failure.DeliveryStatus == ValkeyCommandDeliveryStatus.NotSent)
+            {
+                // The original group was written before the redirect was received.
+                throw new ValkeyCommandTimeoutException(budget, ValkeyCommandDeliveryStatus.MayHaveBeenSent);
             }
             catch (Exception failure) when (failure is ValkeyConnectionException or ValkeyProtocolException)
             {
