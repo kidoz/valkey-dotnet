@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
+        <!-- The integration fixture runs this helper in its pinned .NET 10 container. -->
+        <TargetFramework>net10.0</TargetFramework>
         <OutputType>Exe</OutputType>
         <IsPackable>false</IsPackable>
         <!-- CA1303: stdout is a fixed machine-readable test protocol, not localized UI. -->

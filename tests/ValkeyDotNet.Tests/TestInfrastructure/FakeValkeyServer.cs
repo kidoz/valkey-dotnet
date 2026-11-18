@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -23,15 +24,18 @@ internal sealed class FakeValkeyServer : IAsyncDisposable
     private readonly TcpListener _listener;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly List<string[]> _received = [];
+    private readonly bool _expectTlsRejection;
 
     private FakeValkeyServer(
         TcpListener listener,
         X509Certificate2? certificate,
         int sessionCount,
-        Func<int, FakeValkeySession, Task> handler
+        Func<int, FakeValkeySession, Task> handler,
+        bool expectTlsRejection = false
     )
     {
         _listener = listener;
+        _expectTlsRejection = expectTlsRejection;
         Session = RunAsync(certificate, sessionCount, handler);
     }
 
@@ -43,11 +47,15 @@ internal sealed class FakeValkeyServer : IAsyncDisposable
     /// <summary>Every command the server read, in wire order. Read it after awaiting <see cref="Session"/>.</summary>
     public IReadOnlyList<string[]> ReceivedCommands => _received;
 
-    public static FakeValkeyServer Start(Func<FakeValkeySession, Task> handler, X509Certificate2? certificate = null)
+    public static FakeValkeyServer Start(
+        Func<FakeValkeySession, Task> handler,
+        X509Certificate2? certificate = null,
+        bool expectTlsRejection = false
+    )
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        return new FakeValkeyServer(listener, certificate, 1, (_, session) => handler(session));
+        return new FakeValkeyServer(listener, certificate, 1, (_, session) => handler(session), expectTlsRejection);
     }
 
     public static FakeValkeyServer StartMany(
@@ -137,25 +145,34 @@ internal sealed class FakeValkeyServer : IAsyncDisposable
         Func<int, FakeValkeySession, Task> handler
     )
     {
-        SslStream? tls = null;
         try
         {
             connection.NoDelay = true;
             using var registration = _shutdown.Token.Register(connection.Dispose);
 
-            Stream stream = connection.GetStream();
-            if (certificate is not null)
+            var stream = connection.GetStream();
+            if (certificate is null)
             {
-                tls = new SslStream(stream, leaveInnerStreamOpen: false);
+                await handler(index, new FakeValkeySession(stream, _received));
+                return;
+            }
+
+            await using var tls = new SslStream(stream, leaveInnerStreamOpen: false);
+            try
+            {
                 await tls.AuthenticateAsServerAsync(
                     certificate,
                     clientCertificateRequired: false,
                     checkCertificateRevocation: false
                 );
-                stream = tls;
+            }
+            catch (AuthenticationException) when (_expectTlsRejection)
+            {
+                // The runtime can report the client's rejection as a TLS alert on the server.
+                return;
             }
 
-            await handler(index, new FakeValkeySession(stream, _received));
+            await handler(index, new FakeValkeySession(tls, _received));
         }
         catch (OperationCanceledException)
         {
@@ -175,11 +192,6 @@ internal sealed class FakeValkeyServer : IAsyncDisposable
         }
         finally
         {
-            if (tls is not null)
-            {
-                await tls.DisposeAsync();
-            }
-
             connection.Dispose();
         }
     }

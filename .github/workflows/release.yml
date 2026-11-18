@@ -76,6 +76,7 @@ jobs:
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: global.json
+          dotnet-version: '10.0.x'
 
       - name: Restore tools
         run: dotnet tool restore
@@ -108,7 +109,7 @@ jobs:
           -p:Version=${{ steps.version.outputs.version }}
 
       - name: Test
-        run: dotnet run --project tests/ValkeyDotNet.Tests --configuration Release --no-build
+        run: dotnet test --project tests/ValkeyDotNet.Tests --configuration Release --no-build
 
       - name: Pack
         run: >

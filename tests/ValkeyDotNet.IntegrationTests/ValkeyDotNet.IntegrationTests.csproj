@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
         <AssemblyName>ValkeyDotNet.IntegrationTests</AssemblyName>
     </PropertyGroup>
     <ItemGroup>

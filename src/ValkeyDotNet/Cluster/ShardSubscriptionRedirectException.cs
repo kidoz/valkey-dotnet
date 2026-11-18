@@ -36,7 +36,7 @@ internal sealed class ShardSubscriptionRedirectException(int slot, string host, 
         {
             throw new ValkeyClusterException("Malformed shard subscription redirect.");
         }
-        var separator = parts[2].LastIndexOf(':');
+        var separator = parts[2].AsSpan().LastIndexOf(':');
         if (
             separator < 0
             || !int.TryParse(

@@ -173,7 +173,7 @@ public sealed partial class ValkeyClusterIntegrationTests
 
     private static ValkeyClusterEndpoint ParseEndpoint(string value)
     {
-        var separator = value.LastIndexOf(':');
+        var separator = value.AsSpan().LastIndexOf(':');
         if (separator <= 0)
             throw new FormatException($"Cluster endpoint '{value}' must contain a host and port.");
         var host = value[..separator].Trim('[', ']');

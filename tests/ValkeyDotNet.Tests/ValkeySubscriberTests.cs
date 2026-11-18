@@ -376,7 +376,11 @@ public sealed partial class ValkeySubscriberTests
     public async Task TlsUsesPlatformValidationByDefault()
     {
         using var certificate = FakeValkeyServer.CreateSelfSignedCertificate();
-        await using var server = FakeValkeyServer.Start(session => session.ReadCommandAsync(), certificate);
+        await using var server = FakeValkeyServer.Start(
+            session => session.ReadCommandAsync(),
+            certificate,
+            expectTlsRejection: true
+        );
         await Assert.ThrowsAsync<AuthenticationException>(() =>
             ValkeySubscriber.ConnectAsync(
                 new ValkeySubscriberOptions

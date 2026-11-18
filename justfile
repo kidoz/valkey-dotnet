@@ -32,7 +32,7 @@ build-release:
 
 # Run the server-free unit tests.
 test:
-    dotnet run --project {{ tests }}
+    dotnet test --project {{ tests }}
 
 # Run the live suite against a disposable server. Skips when no endpoint is set.
 test-live endpoint="127.0.0.1:6379":

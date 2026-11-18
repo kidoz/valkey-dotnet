@@ -1100,7 +1100,7 @@ public sealed partial class ValkeyClusterClient : IAsyncDisposable
         )
             throw new ValkeyClusterException("The server returned a malformed cluster redirect.", exception);
 
-        var separator = parts[2].LastIndexOf(':');
+        var separator = parts[2].AsSpan().LastIndexOf(':');
         if (
             separator < 0
             || !int.TryParse(

@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
+        <!-- BenchmarkDotNet 0.15.8 does not recognize the .NET 11 runtime. -->
+        <TargetFramework>net10.0</TargetFramework>
         <OutputType>Exe</OutputType>
         <IsPackable>false</IsPackable>
         <AssemblyName>ValkeyDotNet.Benchmarks</AssemblyName>

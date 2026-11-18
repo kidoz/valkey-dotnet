@@ -1033,7 +1033,11 @@ public sealed class ValkeyClientTests
     public async Task ConnectAsyncRejectsAnUntrustedCertificateByDefault()
     {
         using var certificate = FakeValkeyServer.CreateSelfSignedCertificate();
-        await using var server = FakeValkeyServer.Start(session => session.ExpectHandshakeAsync(), certificate);
+        await using var server = FakeValkeyServer.Start(
+            session => session.ExpectHandshakeAsync(),
+            certificate,
+            expectTlsRejection: true
+        );
         var options = new ValkeyClientOptions
         {
             Host = "127.0.0.1",
